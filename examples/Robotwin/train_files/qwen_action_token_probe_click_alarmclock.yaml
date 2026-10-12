@@ -1,0 +1,65 @@
+run_id: qwen_action_token_probe_click_alarmclock
+run_root_dir: results/Checkpoints
+seed: 42
+trackers: [jsonl]
+wandb_entity: your_wandb_entity
+wandb_project: vlact-physical-tokens
+is_debug: false
+
+framework:
+  name: QwenActionTokenProbe
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+    attn_implementation: flash_attention_2
+  action_token_probe:
+    vocab_size: 512
+    token_count: 8
+    hidden_size: 1024
+    dropout: 0.0
+    train_last_n_layers: 2
+    prompt_template: "Task: {instruction}\nPredict the next robot action tokens."
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    data_root_dir: ./shared_robotwin
+    data_mix: robotwin_click_alarmclock_wrap32
+    action_type: abs_qpos
+    action_mode: abs
+    discrete_token_cache: ./artifacts/token_caches/click_alarmclock_clean_ema_step5000.npz
+    exclude_episode_ids: [5, 20, 25, 39, 49]
+    per_device_batch_size: 1
+    image_size: [224, 224]
+    video_backend: pyav
+    include_state: true
+    num_workers: 2
+
+trainer:
+  epochs: 100
+  max_train_steps: 500
+  num_warmup_steps: 50
+  save_interval: 500
+  save_trainable_only: true
+  eval_interval: 501
+  logging_frequency: 1
+  learning_rate:
+    base: 1.0e-5
+    qwen_vl_interface: 1.0e-5
+    token_probe: 1.0e-4
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-6
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-8
+    weight_decay: 1.0e-8
+  freeze_modules: ''
+  pretrained_checkpoint: /mnt/jfzn/liujn/StarVLA/VLAct_Qwen3_Pretrain/checkpoints/steps_100000_pytorch_model.pt
+  reload_modules: qwen_vl_interface
+  is_resume: false
+  reset_steps: true
+  gradient_accumulation_steps: 1
+  gradient_clipping: 1.0
+  enable_gradient_checkpointing: true
+  enable_mixed_precision_training: true

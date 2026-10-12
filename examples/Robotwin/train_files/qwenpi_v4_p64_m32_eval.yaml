@@ -1,0 +1,74 @@
+run_id: qwenpi_v4_p64_m32_eval
+run_root_dir: results/Checkpoints
+seed: 42
+trackers: [jsonl]
+wandb_entity: your_wandb_entity
+wandb_project: vlact-physical-tokens
+is_debug: false
+
+framework:
+  name: QwenPIv4JointTokens
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+    attn_implementation: flash_attention_2
+  action_model:
+    expert_model_path: ./playground/Pretrained_models/Qwen3-0.6B
+    action_dim: 14
+    future_action_window_size: 31
+    max_seq_len: 1024
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_inference_timesteps: 4
+    repeated_diffusion_steps: 4
+  discrete_conditioning:
+    enabled: true
+    action_vocab_size: 128
+    physics_vocab_size: 128
+    max_action_tokens: 4
+    max_physics_tokens: 64
+    action_gate_init: 0.1
+    physics_gate_init: 0.1
+    action_condition_dropout: 0.0
+    physics_condition_dropout: 0.0
+    physics_condition_enabled: true
+    physics_fusion_mode: pi_separate_multilayer_residual
+    physics_group_size: 2
+  joint_token_prediction:
+    action_vocab_size: 128
+    action_token_count: 4
+    physics_vocab_size: 128
+    physics_token_count: 64
+    hidden_size: 1024
+    action_condition_dim: 256
+    dropout: 0.0
+    condition_source: predicted
+    action_loss_weight: 1.0e-3
+    physics_loss_weight: 1.0e-4
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    data_root_dir: ./shared_robotwin
+    data_mix: robotwin_phystoken_d15_8tasks_wrap32
+    action_type: abs_qpos
+    action_mode: abs
+    discrete_token_cache: ./artifacts/token_caches/robotwin_p64_predicted_action4_physics64_full_step20000.npz
+    exclude_episode_ids: [5, 20, 25, 39, 49]
+    pretrained_stats_path: /mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/dataset_statistics.json
+    per_device_batch_size: 1
+    image_size: [224, 224]
+    image_size_buckets: [[320, 180], [280, 210]]
+    video_backend: pyav
+    include_state: true
+    num_workers: 2
+    balance_dataset_weights: true
+    balance_trajectory_weights: false
+    sequential_step_sampling: false
+
+trainer:
+  pretrained_checkpoint: /mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/checkpoints/steps_100000_pytorch_model.pt
+  joint_token_predictor_init_checkpoint: null
+  policy_extension_init_checkpoint: null
+  action_tokenizer_init_checkpoint: ./artifacts/action_tokenizer_multitask/ema_4x128_steps5000/step-00005000.pt
+  physics_tokenizer_init_checkpoint: ./artifacts/physical_language_tokenizers/p64_phi_residual_ema_64x128_full_steps20000/step-00020000.pt

@@ -1,0 +1,44 @@
+# Experiment outputs and large generated artifacts
+artifacts/
+results/
+logs/
+wandb/
+reports/
+
+# Model weights and checkpoints (never commit)
+**/checkpoint*/
+**/checkpoints/
+**/final_model/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.npz
+*.npy
+*.mp4
+*.avi
+*.mov
+
+# Datasets and local model caches
+data/
+datasets/
+pretrained_models/
+shared_checkpoints/
+
+# Build/cache/local environment files
+**/build/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.egg-info/
+.env
+.DS_Store
+
+# Runtime locks and temporary files
+*.lock
+*.tmp
+*.swp

@@ -1,0 +1,96 @@
+run_id: qwenpi_v4_physical_tokens_d48_8tasks
+run_root_dir: results/Checkpoints
+seed: 42
+trackers: [jsonl]
+wandb_entity: your_wandb_entity
+wandb_project: vlact-physical-tokens
+is_debug: false
+
+framework:
+  name: QwenPIv4PhysicalTokens
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+    attn_implementation: flash_attention_2
+  action_model:
+    expert_model_path: ./playground/Pretrained_models/Qwen3-0.6B
+    action_dim: 14
+    future_action_window_size: 31
+    max_seq_len: 1024
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_inference_timesteps: 4
+    repeated_diffusion_steps: 4
+  discrete_conditioning:
+    enabled: true
+    action_vocab_size: 128
+    physics_vocab_size: 256
+    max_action_tokens: 4
+    max_physics_tokens: 256
+    action_gate_init: 0.1
+    physics_gate_init: 0.1
+    action_condition_dropout: 0.0
+    physics_condition_dropout: 0.2
+    physics_condition_enabled: true
+    # Raw physics256 is grouped to memory16. Action4 and physics16 use
+    # independent residual-attention calls and independent per-layer gates.
+    physics_fusion_mode: pi_separate_multilayer_residual
+    physics_group_size: 16
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    data_root_dir: ./shared_robotwin
+    data_mix: robotwin_phystoken_d15_8tasks_wrap32
+    action_type: abs_qpos
+    action_mode: abs
+    discrete_token_cache: ./artifacts/token_caches/robotwin_d41_8tasks_predicted_dual_steps8000.npz
+    exclude_episode_ids: [5, 20, 25, 39, 49]
+    pretrained_stats_path: /mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/dataset_statistics.json
+    per_device_batch_size: 1
+    image_size: [224, 224]
+    image_size_buckets: [[320, 180], [280, 210]]
+    video_backend: pyav
+    include_state: true
+    num_workers: 2
+    balance_dataset_weights: true
+    balance_trajectory_weights: false
+    sequential_step_sampling: false
+
+trainer:
+  epochs: 100
+  max_train_steps: 20
+  num_warmup_steps: 2
+  save_interval: 20
+  save_trainable_only: true
+  eval_interval: 21
+  logging_frequency: 1
+  learning_rate:
+    base: 1.0e-4
+    pi_discrete_conditioner: 1.0e-4
+    pi_action_layer_gates: 1.0e-2
+    pi_physics_layer_gates: 1.0e-2
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 5.0e-7
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-8
+    weight_decay: 1.0e-8
+  pretrained_checkpoint: /mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/checkpoints/steps_100000_pytorch_model.pt
+  strict_extension_missing_prefixes: pi_discrete_conditioner,pi_action_layer_gates,pi_physics_layer_gates
+  action_tokenizer_init_checkpoint: ./artifacts/action_tokenizer_multitask/ema_4x128_steps5000/step-00005000.pt
+  action_tokenizer_init_sha256: 414a751119855119afa9604054e5413a845913e76de22c472bed5375973fdc86
+  physics_tokenizer_init_checkpoint: ./artifacts/physical_language_tokenizers/d29_full_diversity_ema_256x256_steps8000/step-00008000.pt
+  physics_tokenizer_init_sha256: 8625b3d7580625b1a4a33bce874537a2863cd18ddfab0e595fa20537a8f76b5c
+  freeze_modules: qwen_vl_interface,prefix_proj,action_in_proj,action_out_proj,time_mlp,action_pos_embed,expert_layers,expert_final_norm,rotary_emb
+  is_resume: false
+  reset_steps: true
+  random_init_action_model: false
+  gradient_accumulation_steps: 1
+  gradient_clipping: 1.0
+  enable_gradient_checkpointing: true
+  enable_mixed_precision_training: true
+  endpoint_wrap_loss_weight: 0.5
+  shortest_angular_joint_loss_diff: true
