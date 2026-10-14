@@ -62,3 +62,14 @@ def test_robotwin_compat_server_owns_normalization_and_returns_raw_actions():
         action,
         model_order_actions[0, 0, [0, 1, 2, 3, 4, 5, 12, 6, 7, 8, 9, 10, 11, 13]],
     )
+
+
+def test_robotwin_pure_pi_omits_state_from_policy_request():
+    model = _server_preprocessed_client(np.zeros((1, 2, 14), dtype=np.float32))
+    model._send_state_to_server = False
+    model.step({
+        "lang": "pick the bottles",
+        "image": [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(3)],
+        "state": np.arange(14, dtype=np.float32),
+    })
+    assert "state" not in model.client.request["examples"][0]

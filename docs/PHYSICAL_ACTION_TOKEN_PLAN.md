@@ -4541,3 +4541,56 @@ alpha = 0.2 * tanh(raw_gate)
 当前 node3 的 20k distill run 不在中途修改 gate LR，以保持实验可比性。后续应在完成 checkpoint 后记录
 raw gate、bounded alpha、residual norm 及 Pure-success 保持率，并以独立消融比较 `1e-3/3e-3/1e-2`；
 若 `1e-2` 出现 gate 饱和或 Pure PI 回归，优先采用较小 gate LR，而不是继续增加训练步数。
+
+### 21.96 Pure PI、训练 tanh 与蒸馏权重的困难集／四任务汇总（2026-10-14）
+
+按用户要求，以下直接引用第 21.91、21.92、21.94 节已有的 Pure PI 与**训练时启用**
+`pi_gate_bound_mode=tanh, alpha_max=0.2` 的 20k 权重结果，不再补跑。新增两列使用同一份
+`qwenpi_v4_p64_m32_distill_medium_seed42_steps20000` 20k checkpoint：node003 保持训练时的无界 gate，
+node004 仅在推理端映射为 `0.2 × tanh(raw_gate)`。新增两轮都用恢复版旧 RoboTwin、RT 渲染、
+有 state 输入＋wrap 动作解码；困难集为 `demo_randomized`，四任务为 `demo_clean`。训练 tanh 权重
+**不是**蒸馏权重，也不是在蒸馏权重上只修改推理 gate。
+
+八个困难 episode 的逐 seed 成败如下；`1` 是成功，`0` 是完成策略 rollout 后失败，`—` 是专家预检跳过、
+没有策略结果：
+
+| task / scene seed | 历史 Pure PI | 历史训练 tanh | 蒸馏无界 gate | 蒸馏＋推理 tanh |
+| --- | ---: | ---: | ---: | ---: |
+| `click_alarmclock/100005` | 1 | 0 | 0 | 0 |
+| `click_alarmclock/100017` | 0 | 1 | 1 | 0 |
+| `click_alarmclock/100018` | 1 | 1 | 1 | 1 |
+| `click_alarmclock/100022` | 0 | 1 | 1 | 0 |
+| `click_bell/100008` | 0 | 1 | 1 | 1 |
+| `hanging_mug/100002` | 0 | 0 | 0 | — |
+| `hanging_mug/100003` | 0 | 0 | 0 | 0 |
+| `press_stapler/100053` | 0 | 1 | 0 | 0 |
+| **各轮有效结果** | **2/8** | **5/8** | **4/8** | **2/7** |
+| **共同有效的 7 seed** | **2/7** | **5/7** | **4/7** | **2/7** |
+
+因此不能把蒸馏＋推理 tanh 写成 `2/8`：`hanging_mug/100002` 在该轮被预检跳过。历史训练 tanh
+在困难集的 `5/8` 是训练边界版本的结果，不能拿来证明“给蒸馏无界权重推理时补 tanh”有效；后者在共同
+7 seed 上仅 `2/7`，相对其无界推理的 `4/7` 没有改善。
+
+四任务以第 21.94 节的 **32 个历史共同有效 seed** 为交集，并将两轮蒸馏结果限定在同一批 seed；
+这是 seed 对齐的汇总，不是声称历史评测环境与本轮恢复环境完全相同：
+
+| `demo_clean` 任务 | 共同有效 seed | 历史 Pure PI | 历史训练 tanh | 蒸馏无界 gate | 蒸馏＋推理 tanh |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `handover_block` | 8 | 8/8 | 7/8 | 6/8 | 2/8 |
+| `beat_block_hammer` | 7 | 7/7 | 5/7 | 6/7 | 5/7 |
+| `click_bell` | 10 | 9/10 | 9/10 | 9/10 | 7/10 |
+| `place_phone_stand` | 7 | 7/7 | 6/7 | 5/7 | 6/7 |
+| **合计** | **32** | **31/32** | **27/32** | **26/32** | **20/32** |
+
+两轮蒸馏权重自身的完整四任务共同有效集合是 35 seed，分别为无界 `29/35`、推理 tanh `21/35`；
+上表为了与历史两列对应，另外排除了 3 个不属于第 21.94 节交集的有效 seed。原计划 40 seed 中的专家
+预检跳过不能计入失败。历史 Pure PI／训练 tanh 与新增蒸馏评测不在同一次恢复版仿真器上运行，且训练
+目标不同；因此 `31/32、27/32、26/32、20/32` 只能作为同 seed 的描述性对照，不能把列间差值
+单独归因于蒸馏 loss 或 gate 边界。唯一同权重、同恢复协议的 gate 消融是后两列；其中 handover
+从 `6/8` 降到 `2/8`，说明直接对已按无界 gate 训练的权重做推理 tanh 映射并不能修复这轮表现。
+
+新增评测的完整协议、预检跳过清单和日志在 `docs/ROBOTWIN_DISTILL_GATE_INFERENCE_EVAL_20261014.md`；
+node003 和 node004 最终四任务队列分别为
+`logs/distill_medium_state_wrap_recovered_rt_node3_four_uniqueports_20261013/` 和
+`logs/distill_medium_state_wrap_tanh02_recovered_rt_node4_four_uniqueports_20261013/`。曾启动的 Pure PI／
+训练 tanh 同协议补跑已按用户指示立即停止，未完成数据未纳入上述任何统计。

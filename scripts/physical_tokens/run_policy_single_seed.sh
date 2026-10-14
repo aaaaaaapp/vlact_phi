@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=/mnt/jfzn/liujn/code/VLAct-PhysToken
-STAR=/mnt/jfzn/liujn/code/Starvla/Starvla
+STAR=${STARVLA_PATH:-/mnt/jfzn/liujn/code/Starvla/Starvla}
 PY=/mnt/jfzn/liujn/miniconda3/envs/vlact/bin/python
-RPY=/mnt/jfzn/liujn/robotwin_env/bin/python
-RPATH=/mnt/jfzn/liujn/code/Starvla/Starvla/playground/RoboTwin_eval
+RPY=${ROBOTWIN_PYTHON:-/mnt/jfzn/liujn/robotwin_env/bin/python}
+RPATH=${ROBOTWIN_PATH:-/mnt/jfzn/liujn/code/RoboTwin-main}
 TASK=${TASK:-press_stapler}
 SEED=${SEED:?SEED is required}
 GPU=${GPU_ID:?GPU_ID is required}
@@ -12,7 +12,15 @@ PORT=${PORT:?PORT is required}
 TAG=${TAG:?TAG is required}
 CKPT=${CKPT:?CKPT is required}
 TASK_CONFIG=${TASK_CONFIG:-demo_randomized}
+if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then
+  echo "Refusing to start policy server: port $PORT is already in use" >&2
+  exit 2
+fi
 EXTRA_SERVER_ARGS=()
+if [[ -n "${PI_GATE_BOUND_MODE:-}" ]]; then
+  EXTRA_SERVER_ARGS+=(--pi-gate-bound-mode "$PI_GATE_BOUND_MODE")
+  EXTRA_SERVER_ARGS+=(--pi-gate-alpha-max "${PI_GATE_ALPHA_MAX:-0.2}")
+fi
 if [[ -n "${SELECTOR_THRESHOLD:-}" ]]; then
   EXTRA_SERVER_ARGS+=(--selector-threshold "$SELECTOR_THRESHOLD" --selector-radius "${SELECTOR_RADIUS:-0.2}" --selector-trace "$ROOT/logs/selector_${TAG}.jsonl")
 fi

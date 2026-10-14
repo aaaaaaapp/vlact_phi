@@ -3,7 +3,6 @@ artifacts/
 results/
 logs/
 wandb/
-reports/
 
 # Model weights and checkpoints (never commit)
 **/checkpoint*/
@@ -19,6 +18,10 @@ reports/
 *.mp4
 *.avi
 *.mov
+
+# Version the hard-episode gallery media used by the checked-in report;
+# keep videos elsewhere as experiment outputs.
+!reports/hard_episode_videos/**/*.mp4
 
 # Datasets and local model caches
 data/

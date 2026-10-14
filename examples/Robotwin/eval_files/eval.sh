@@ -7,8 +7,12 @@ export ROBOTWIN_PATH="${ROBOTWIN_PATH:-/mnt/jfzn/liujn/code/Starvla/Starvla/play
 export ROBOTWIN_PYTHON="${ROBOTWIN_PYTHON:-/mnt/jfzn/liujn/robotwin_env/bin/python}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STARVLA_PATH="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+# Keep an explicitly supplied StarVLA/RoboTwin checkout.  The fixed-seed
+# evaluator imports RoboTwin's ``script`` package; deriving this from this
+# file's location points at VLAct-PhysToken and makes that import fail.
+STARVLA_PATH="${STARVLA_PATH:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 EVAL_FILES_PATH="${SCRIPT_DIR}"
+VLAct_PATH="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 if [[ $# -lt 6 ]]; then
   echo "Usage: bash eval.sh <task_name> <task_config> <ckpt_setting> <seed> <gpu_id> <policy_ckpt_path> [policy_port] [policy_host]" >&2
@@ -62,6 +66,30 @@ echo "[eval.sh] DEPLOY_POLICY=${runtime_deploy_policy}"
 [[ -f "${policy_ckpt_path}" ]] || { echo "[eval.sh] missing ckpt ${policy_ckpt_path}" >&2; exit 1; }
 
 cd "${ROBOTWIN_PATH}"
+
+# RoboTwin 2.0 replaced the legacy ``script/`` evaluator with the
+# XPolicyLab-based ``scripts/eval_policy_xpolicylab.py`` entry point.  Keep the
+# old path below for legacy checkouts, but route a 2.0 checkout through the
+# compatibility client that talks to VLAct's existing websocket server.
+if [[ -f "${ROBOTWIN_PATH}/scripts/eval_policy_xpolicylab.py" ]]; then
+  new_args=(
+    --task_name "${task_name}"
+    --task_config "${task_config}"
+    --policy_name "model2robotwin_interface"
+    --host "${policy_host}"
+    --port "${policy_port}"
+    --protocol starvla_legacy_ws
+    --policy_ckpt_path "${policy_ckpt_path}"
+    --seed "${seed}"
+    --additional_info "ckpt_setting=${ckpt_setting}"
+  )
+  [[ -n "${ROBOTWIN_TEST_NUM:-}" ]] && new_args+=(--test_num "${ROBOTWIN_TEST_NUM}")
+  env \
+    PYTHONPATH="${ROBOTWIN_PATH}:${ROBOTWIN_PATH}/scripts:${STARVLA_PATH}:${VLAct_PATH}:${EVAL_FILES_PATH}:${PYTHONPATH:-}" \
+    PYTHONWARNINGS=ignore::UserWarning "${ROBOTWIN_PYTHON}" \
+    "${ROBOTWIN_PATH}/scripts/eval_policy_xpolicylab.py" "${new_args[@]}"
+  exit $?
+fi
 
 eval_entrypoint="script/eval_policy.py"
 if [[ -n "${ROBOTWIN_FIXED_TEST_SEEDS:-}" ]]; then

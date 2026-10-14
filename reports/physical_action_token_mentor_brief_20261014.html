@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VLAct Physical Action Token｜师兄汇报</title>
+  <style>
+    :root{--bg:#f5f7fb;--ink:#18243a;--muted:#607087;--line:#dce4ef;--card:#fff;--blue:#245bc0;--green:#18724e;--amber:#9a6200}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif}
+    main{max-width:1160px;margin:auto;padding:30px 22px 70px}header{background:linear-gradient(130deg,#142d58,#2d64bf);color:white;padding:28px 32px;border-radius:16px}
+    h1{font-size:30px;margin:0 0 8px}h2{font-size:22px;margin:34px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--line)}h3{font-size:17px;margin:22px 0 8px}
+    p{margin:8px 0}a{color:var(--blue)}header a{color:white}.muted{color:var(--muted)}header .muted{color:#dce9ff}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:13px;margin:18px 0}.card,.note{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px 17px}
+    .card strong{display:block;font-size:24px;color:var(--blue)}.card small{display:block;color:var(--muted)}.note{border-left:4px solid var(--blue);margin:14px 0}.warning{border-left-color:#da9a23;background:#fffaf0}
+    table{border-collapse:collapse;width:100%;background:white;margin:12px 0 17px}th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:#edf3fc}td.num,th.num{text-align:center;white-space:nowrap}
+    code{font:0.87em ui-monospace,SFMono-Regular,Menlo,monospace;background:#edf1f7;padding:2px 4px;border-radius:4px;word-break:break-word}ul,ol{padding-left:23px}li{margin:5px 0}.tag{display:inline-block;background:#e8f0ff;color:#1f57b7;border-radius:99px;padding:1px 9px;font-size:12px}
+    .flow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:12px 0}.flow span{background:white;border:1px solid #b9cbe9;border-radius:8px;padding:8px 10px}.flow b{color:var(--blue)}
+    .small{font-size:13px;color:var(--muted)}@media(max-width:760px){main{padding:12px}header{padding:20px}table{font-size:13px}th,td{padding:6px}}
+    @media print{body{background:white}main{max-width:none;padding:0}header{-webkit-print-color-adjust:exact;print-color-adjust:exact}.card,.note{break-inside:avoid}h2{break-after:avoid}}
+  </style>
+</head>
+<body><main>
+  <header>
+    <h1>VLAct Physical Action Token：实验进展与下一步计划</h1>
+    <p>师兄汇报版 · 2026-10-14 · 基于 10 月 9 日简报更新</p>
+    <p class="muted">一句话结论：离散 action／physics token 到连续 Pi 的链路已跑通，但目前没有可靠证据证明整体 rollout 超过成熟 Pure PI；下一阶段要先分清“物理信息有效”与“新增分支只是正则化／扰动”。</p>
+  </header>
+
+  <section class="grid">
+    <div class="card"><small>当前主模型</small><strong>P64 / M32</strong><small>4 个 action ID；64 个 physics ID 聚合为 32 个 policy memory</small></div>
+    <div class="card"><small>四任务历史共同有效 seed</small><strong>Pure 31/32</strong><small>joint 26/32；训练 tanh 27/32；蒸馏无界 26/32</small></div>
+    <div class="card"><small>困难 8 episode</small><strong>2 → 5/8</strong><small>历史 Pure PI 2/8 → 训练 tanh 5/8；样本很小</small></div>
+    <div class="card"><small>当前判断</small><strong>机制待证</strong><small>正确 physics token 是否比关闭或打乱更有用，仍需闭环验证</small></div>
+  </section>
+
+  <h2>1. 想解决的科学问题与当前实现</h2>
+  <p>设想是让当前观测、指令和状态预测两类离散中间表示：action token 表达短时动作结构，physics token 表达未来可见运动／交互；连续 Pi action expert 仍负责精细控制。真正要证明的是 <b>正确预测的 physics 内容</b> 比同容量、打乱或关闭的条件更有用，并且不会破坏 Pure PI 已有能力。</p>
+  <div class="flow"><span>图像＋指令＋state</span><b>→</b><span>Qwen-VL prompt hidden</span><b>→</b><span>4 action ID＋64 physics ID</span><b>→</b><span>ID embedding＋独立 residual attention／gate</span><b>→</b><span>连续动作 chunk</span></div>
+  <div class="note"><b>实现口径要说准确：</b>当前 joint predictor 取 VLM 最后一个有效 prompt hidden state，经两个 probe 一次输出 action／physics logits；physics probe 还读 action logits 的 soft context。Pi 的基础路径仍读取完整 prompt hidden；新增离散分支用 predicted ID 查可学习 embedding，再加入位置／类型信息并送入独立 residual 分支。它<b>不是</b>已经实现的逐 token 自回归 prefill／生成 hidden-state 条件。Pure PI 通过显式关闭离散分支回退。</div>
+  <h3>10 月 9 日简报第 2 部分：技术设计</h3>
+  <table><thead><tr><th>部分</th><th>实现与作用</th></tr></thead><tbody>
+    <tr><td>Action tokenizer</td><td>把 32×14 的连续 action chunk 压成 <b>4 个位置、每位置 128 类</b> EMA-VQ ID；离线专家动作提供监督，部署时由 VLM 预测 ID，Pi 仍输出连续动作。</td></tr>
+    <tr><td>Physical Language tokenizer</td><td>PhiZero-aligned 时空设计：16 个 temporal transitions × 4 个 spatial queries，得到 <b>64 个 raw physics ID、128 类 codebook</b>；policy 端每 2 个 ID 聚合为 1 个 memory，共 <b>32 个 physics memory</b>。</td></tr>
+    <tr><td>连续动作条件</td><td>原 VLM prefix 保留；action／physics 使用独立的 residual cross-attention 和逐层 gate，可显式关闭新增条件回退 Pure PI，而不是把零 token 拼入同一 softmax。</td></tr>
+    <tr><td>联合目标</td><td>连续 flow/action loss＋action-token CE＋physics-token CE；action／physics tokenizer 冻结，VLM／Pi 主干主要冻结，训练小型 predictor、conditioner 与 gates。蒸馏版本另加 Pure PI teacher loss。</td></tr>
+    <tr><td>公平对照</td><td>Pure PI、action-only、joint hard 应使用相同的 scene seeds、仿真器、state／wrap 设置和视频复核，并明确各自 checkpoint；只统计真正完成策略 rollout 的有效 episode。当前汇总含历史与恢复版环境，不能视作已经满足全部同协议条件。</td></tr>
+  </tbody></table>
+  <h3>10 月 9 日简报第 3 部分：训练覆盖与参数</h3>
+  <p>joint／action-only 使用八任务数据混合：<code>click_alarmclock</code>、<code>beat_block_hammer</code>、<code>open_microwave</code>、<code>shake_bottle</code>、<code>move_playingcard_away</code>、<code>pick_dual_bottles</code>、<code>handover_block</code>、<code>place_object_basket</code>。</p>
+  <table><thead><tr><th>项目</th><th>10 月 9 日记录</th><th>解释</th></tr></thead><tbody>
+    <tr><td>数据覆盖</td><td>400 episodes／85,098 clips；过滤后 360 episodes／76,109 clips</td><td>每任务原有 50 个 episode，保留 45 个。</td></tr>
+    <tr><td>训练预算</td><td>20,000 steps；global batch 128（8 GPU × 16）</td><td>约 256 万次 sample exposure，相当于对过滤后 clips 重复约 33.6 遍。</td></tr>
+    <tr><td>可训练参数</td><td>15.596M／总计 5,259.375M；79 个可训练 tensors</td><td>主要为 conditioner、action／physics gates、两路 token predictor 与 embedding。</td></tr>
+    <tr><td>冻结参数</td><td>Qwen3-VL、Pi action expert、输入／输出投影等</td><td>尽量保留主策略能力；但冻结主干不保证新增 residual 条件不会损伤 rollout。</td></tr>
+  </tbody></table>
+  <p class="small">以上是当时的八任务 joint 配方，不代表后续蒸馏或训练 tanh 版本的配置完全相同；扩至 RoboTwin 全任务时需重新计算数据覆盖、参数和训练预算。</p>
+
+  <h2>2. 已完成什么，结果说明什么</h2>
+  <ul>
+    <li><b>表征链路：</b>共享 RoboTwin 八任务 action tokenizer、P64 physics tokenizer、token cache、joint predictor 和 Pi residual 条件都已训练和验证。离线有部分 oracle／aligned 优于 shuffled 的信号，但没有稳定转化成跨任务闭环优势。</li>
+    <li><b>评测链路：</b>发现专家预检跳过曾被误报为失败；恢复旧版 RoboTwin＋RT 后，Pure PI handover 的 8 个历史有效 seed 复现 8/8。此后统计只把真正完成 rollout 的 seed 放进分母。</li>
+    <li><b>gate／蒸馏：</b>无界 gate 可长到远大于 1，存在压过 Pure PI 表征的风险。训练时 tanh 权重在历史困难集为 5/8，但四任务未超过 Pure。蒸馏无界权重在恢复协议下与历史 joint 的四任务总数相同；这不是蒸馏已带来提升的证据。</li>
+  </ul>
+  <p class="small">下面四任务表对齐第 21.94 节的 32 个历史共同有效 scene seed；历史模型与本轮恢复版 RT 的蒸馏模型并非完全同一仿真环境，因此只能描述，不能据此做严格因果归因。Physics-only 仅有 click_bell 同十 seed 的另一轮结果，不能补四任务总分。</p>
+  <table><thead><tr><th>demo_clean 任务</th><th class="num">Pure PI</th><th class="num">Action-only</th><th class="num">Physics-only</th><th class="num">原 joint</th><th class="num">训练 tanh</th><th class="num">蒸馏无界</th></tr></thead><tbody>
+    <tr><td>handover_block</td><td class="num">8/8</td><td class="num">8/8</td><td class="num">未测</td><td class="num">7/8</td><td class="num">7/8</td><td class="num">6/8</td></tr>
+    <tr><td>beat_block_hammer</td><td class="num">7/7</td><td class="num">5/7</td><td class="num">未测</td><td class="num">4/7</td><td class="num">5/7</td><td class="num">6/7</td></tr>
+    <tr><td>click_bell</td><td class="num">9/10</td><td class="num">1/10</td><td class="num">5/10*</td><td class="num">8/10</td><td class="num">9/10</td><td class="num">9/10</td></tr>
+    <tr><td>place_phone_stand</td><td class="num">7/7</td><td class="num">6/7</td><td class="num">未测</td><td class="num">7/7</td><td class="num">6/7</td><td class="num">5/7</td></tr>
+    <tr><th>共同 32 seed</th><th class="num">31/32</th><th class="num">20/32</th><th class="num">—</th><th class="num">26/32</th><th class="num">27/32</th><th class="num">26/32</th></tr>
+  </tbody></table>
+  <h3>八个困难 episode：逐 seed 结果</h3>
+  <p class="small">1＝成功；0＝完成策略 rollout 后失败；未测＝没有这组 seed 的 physics-only 闭环记录。历史模型与本轮恢复版 RT 不是完全同一评测环境；表格用于定位差异，不作严格跨环境因果归因。</p>
+  <table><thead><tr><th>任务 / scene seed</th><th class="num">Pure PI</th><th class="num">Action-only</th><th class="num">Physics-only</th><th class="num">原 joint</th><th class="num">训练 tanh</th><th class="num">蒸馏无界</th></tr></thead><tbody>
+    <tr><td>click_alarmclock / 100005</td><td class="num">1</td><td class="num">0</td><td class="num">未测</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td>click_alarmclock / 100017</td><td class="num">0</td><td class="num">0</td><td class="num">未测</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+    <tr><td>click_alarmclock / 100018</td><td class="num">1</td><td class="num">0</td><td class="num">未测</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+    <tr><td>click_alarmclock / 100022</td><td class="num">0</td><td class="num">1</td><td class="num">未测</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+    <tr><td>click_bell / 100008</td><td class="num">0</td><td class="num">0</td><td class="num">未测</td><td class="num">0</td><td class="num">1</td><td class="num">1</td></tr>
+    <tr><td>hanging_mug / 100002</td><td class="num">0</td><td class="num">1</td><td class="num">未测</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td>hanging_mug / 100003</td><td class="num">0</td><td class="num">0</td><td class="num">未测</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td>press_stapler / 100053</td><td class="num">0</td><td class="num">1</td><td class="num">未测</td><td class="num">0</td><td class="num">1</td><td class="num">0</td></tr>
+    <tr><th>有效结果</th><th class="num">2/8</th><th class="num">3/8</th><th class="num">—</th><th class="num">3/8</th><th class="num">5/8</th><th class="num">4/8</th></tr>
+  </tbody></table>
+  <p class="small">困难集的 action-only 逐 seed 结果来自<a href="../docs/PHYSICAL_ACTION_TOKEN_PLAN.md">实验记录第 21.91 节</a>；训练 tanh 见第 21.92 节，蒸馏无界见第 21.96 节。没有测过的 physics-only 格子不是 0。</p>
+  <h3>已有的 Physics-only 闭环消融：同十 seed、另一次 click_bell 评测</h3>
+  <table><thead><tr><th>第 21.90 节的独立 panel</th><th class="num">Action-only</th><th class="num">Physics-only</th><th class="num">No-token v4</th><th class="num">Joint P64/M32</th></tr></thead><tbody>
+    <tr><td>click_bell，10 个固定 seed</td><td class="num">5/10</td><td class="num">5/10</td><td class="num">6/10</td><td class="num">6/10</td></tr>
+  </tbody></table>
+  <p class="small">* 第 21.90 节使用同一组 click_bell scene seed（100100001–010），但属于另一次 gate／容量 sweep；上表的 5/10* 引用的是该轮 physics-only 结果，不据此计算四任务总体。该轮 action-only 5/10 与第 21.94 节的 1/10 也不能混作同一次配对结果，需核对 checkpoint／配置及单次 rollout 波动。现有数据不足以判断八个困难 episode 或其他三任务的 physics-only 表现。</p>
+  <div class="note warning"><b>不能下的结论：</b>26/32 与 26/32 不能证明蒸馏优于原 joint；5/8 不能证明训练 tanh 跨任务有效；离线 MAE／token accuracy 不能替代 rollout。四任务 Pure PI 几乎到顶，也不适合作为唯一增益考场。</div>
+
+  <h2>3. 下一步实验：先扩大可信证据，再扩模型容量</h2>
+  <table><thead><tr><th>优先级</th><th>实验</th><th>关键对照／交付</th></tr></thead><tbody>
+    <tr><td><span class="tag">P0</span></td><td><b>冻结评测协议并扩大验证范围</b>。从目前 8-task 数据训练扩到 RoboTwin 全任务训练；同时另设训练未见任务、物体／纹理或场景的 held-out 组。挑 Pure PI 成功率不贴近 0 或 100% 的中等难度任务，增加有效 seed 和重复次数。</td><td>固定模拟器、renderer、state、wrap、checkpoint、seed、预检规则；所有模型在同一有效 seed 上配对。全任务 in-distribution 提升与跨任务泛化必须分开报告。</td></tr>
+    <tr><td><span class="tag">P1</span></td><td><b>先做信息性诊断。</b>离线比较 oracle／predicted／shuffled／关闭 physics；在线比较 predicted／shuffled／关闭 physics、action-only 和 Pure PI。检查 physics 预测是否超过 task／position majority，而不只超过均匀随机。</td><td>若 oracle 有用、predicted 无用，先改 predictor；若 predicted≈shuffled，先改 token 表示；若条件有用但损伤 Pure 成功样本，重点研究安全 gate。</td></tr>
+    <tr><td><span class="tag">P2</span></td><td><b>训练时 tanh × 蒸馏 loss 的 2×2 对照。</b>固定数据、初始化、冻结边界、训练步数、gate LR，仅改变两个因素；已有版本只能当先导结果，不直接当严格 2×2 表。</td><td>补齐“训练 tanh＋蒸馏”的格子，记录 raw gate、实际 alpha、residual norm、Pure-success 保持率。</td></tr>
+    <tr><td><span class="tag">P3</span></td><td><b>再做容量和融合。</b>分别改变 action／physics token 位置数、physics memory 数和 codebook 大小，避免一次改多个容量轴。</td><td>同预算比较成功率、code 使用率／perplexity、majority 以上的预测力、延迟；不要仅凭重建误差选 tokenizer。</td></tr>
+  </tbody></table>
+
+  <h2>4. 本项目 Physics tokenizer 与 PhiZero 物理 tokenizer 对比</h2>
+  <p>这里比较的是 1014 汇报主线的 <b>RoboTwin P64/M32</b> 与 PhiZero 的 Physical Language Tokenizer；二者不是只差预训练数据的同构模型。</p>
+  <table><thead><tr><th>维度</th><th>本项目 P64/M32 Physics tokenizer</th><th>PhiZero Physical Language Tokenizer</th></tr></thead><tbody>
+    <tr><td>输入与时间尺度</td><td>RoboTwin 未来 17 帧的 Qwen3-VL 空间视觉特征，建模 16 个 temporal transitions；对齐机器人 action／state 数据。</td><td>约 4 秒、8 FPS、33 帧、896×512 的视频 clip；以视频未来变化为主要对象。</td></tr>
+    <tr><td>离散表示</td><td>每个 transition 4 个 spatial queries，共 <b>64 个 raw ID</b>；EMA-VQ，<b>128 类</b> codebook。</td><td>固定 <b>256 个 FSQ symbol</b>；离散词表大小 <b>25,000</b>。</td></tr>
+    <tr><td>训练目标与域</td><td>在 RoboTwin 机器人数据上训练，包含未来视觉特征重建与 action-token 未解释残差的辅助监督。</td><td>以未来视频重建训练的通用视频物理表征；官方说明通用 tokenizer 用于机器人域前需要同域视频重建适配。</td></tr>
+    <tr><td>下游接口</td><td>64 个 ID 每 2 个聚合为 1 个 memory，给 Pi 提供 <b>32 个 physics memory positions</b>；现有 VLM predictor 预测 128 类 ID。</td><td>配套 inverse-FSQ／context conditioner 和 Wan2.2 video DiT 的 LoRA；没有可直接用于现有 Pi 的 P64/M32 memory 接口。</td></tr>
+    <tr><td>本地准备状态</td><td>已有本域 tokenizer、token cache 和对应 policy 训练链路。</td><td>目前本地 PhiZero 仓库只有代码；尚无审计记录所需的官方 <code>tokenizer.safetensors</code>、<code>model_config.json</code> 与 Wan2.2 基座权重。</td></tr>
+  </tbody></table>
+  <div class="note"><b>可行性判断：</b>基于 PhiZero 初始化，在 RoboTwin 视频上做<b>同域 reconstruction fine-tune</b>是可行的研究方向，但目前还不能直接开训或替换现有 physics ID：首先要取得并核验官方 tokenizer、配置、Wan2.2 基座及相关权重／许可；其次要按时间戳制作严格匹配 33 帧、8 FPS 的机器人视频 clip。25,000 类 FSQ ID 与现有 128 类 EMA-VQ ID 没有逐项对应关系，不能直接塞进已训练的 P64 predictor 或 Pi embedding。</div>
+  <p><b>建议的最小对照：</b>在同一 RoboTwin 视频、episode-level train／held-out split 和训练预算下，先用<b>相同 PhiZero 架构</b>比较“随机初始化后本域训练”与“官方初始化后同域重建微调”，单独检验预训练迁移价值；现有 P64/M32 作为另一个本域基线，不把跨架构差异全归因于预训练。先报告未来重建、码本使用率／perplexity 和 held-out 时序对应，再检查 token 是否比打乱／关闭条件更能解释动作。只有表征门控通过，才为 PhiZero ID 另训 VLM predictor，并用学习的映射或蒸馏接入相同数量的 Pi physics memory，在同 seed rollout 比较；64→256 token、128→25,000 类和接口变化仍需单独消融。</p>
+
+  <h2>5. 方法层面的疑问与可执行消融</h2>
+  <table><thead><tr><th>想讨论的问题</th><th>现状与建议的最小实验</th></tr></thead><tbody>
+    <tr><td>prefill hidden state 要不要送给 Pi？</td><td>现有 predictor 用 prompt 最后有效 hidden 一次预测所有 ID；Pi 离散分支读 ID embedding。真正的生成 token hidden state 需要新增 token-position／autoregressive 路径，不是切一个开关。先做相同 token ID 下“embedding only vs position-specific hidden only vs gated mix”，并匹配参数量与推理延迟。</td></tr>
+    <tr><td>hidden state 与 code embedding 怎样混合？</td><td>先从可解释的 <code>h = λ·Proj(hidden) + (1−λ)·Embed(ID)</code> 开始，λ 可固定或受置信度控制；必须做 shuffled-ID、shuffled-hidden、双关闭对照，防止模型只走 hidden 捷径而忽略物理 code。</td></tr>
+    <tr><td>token 数量、码本数怎么选？</td><td>分别扫描 raw physics 长度 N、进入 Pi 的 memory 长度 M、codebook 大小 K；固定另外两个轴。用有效 bitrate、预测难度、usage、成功率与延迟选点。历史 P256/M8 对 P64/M32 同时改变 N、M、K，不能单独解释容量。</td></tr>
+    <tr><td>梯度截断能否抑制 gate 失控？</td><td>当前训练配置已有全局 grad-norm clipping=1.0；它限制单步梯度，不限制 gate 参数最终幅度，且 gate 专用 LR 为 1e-2。先记录各模块 grad／update norm 和实际 residual 比值，再比较较小 gate LR、分组 clipping、训练时 bounded gate；不要同时改三项。</td></tr>
+    <tr><td>DAgger 如何落地？</td><td>策略在线 rollout → 保存偏离专家轨迹的状态 → 从该状态查询专家修正动作 → 聚合数据 → 继续训练。当前 expert-precheck 只验证初始 scene 是否可由专家完成，<b>不等于</b>专家能在任意策略偏离状态重新规划。需先确认仿真器可保存／恢复状态和专家可重规划；否则先做失败轨迹采样＋人工／规则纠偏，不要称作 DAgger。</td></tr>
+  </tbody></table>
+</main></body></html>

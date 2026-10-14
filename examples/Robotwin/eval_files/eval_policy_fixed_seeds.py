@@ -204,6 +204,23 @@ def eval_policy_fixed(
 
 
 def main():
+    # This file is executed by absolute path, so Python's import path does not
+    # necessarily contain the RoboTwin checkout that owns ``script``.
+    robotwin_path = os.environ.get("ROBOTWIN_PATH")
+    starvla_path = os.environ.get("STARVLA_PATH")
+    import sys
+    for candidate in (robotwin_path, starvla_path):
+        if candidate and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+    try:
+        import script  # noqa: F401
+    except ModuleNotFoundError as exc:
+        if exc.name == "script":
+            raise RuntimeError(
+                "RoboTwin script package is unavailable; set ROBOTWIN_PATH "
+                "to the RoboTwin checkout (the directory containing script/)."
+            ) from exc
+        raise
     from script import eval_policy as base
     from script.test_render import Sapien_TEST
 

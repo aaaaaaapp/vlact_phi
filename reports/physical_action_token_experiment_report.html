@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Physical Action Token 实验报告</title>
+  <style>
+    :root{--bg:#f5f7fb;--card:#fff;--ink:#182230;--muted:#5d6b7d;--line:#dfe5ee;--blue:#2563eb;--green:#138a55;--amber:#a16207;--red:#b42318}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    .wrap{max-width:1180px;margin:0 auto;padding:32px 22px 64px}.hero{background:linear-gradient(135deg,#102a56,#2563eb);color:#fff;border-radius:18px;padding:30px 34px;box-shadow:0 12px 30px #183b7325}.hero h1{margin:0 0 6px;font-size:30px}.hero p{margin:5px 0;color:#dbeafe}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:20px 0}.card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:17px 18px;box-shadow:0 4px 14px #1b355b0b}.metric{font-size:25px;font-weight:750;margin-top:3px}.label{color:var(--muted);font-size:13px}.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}h2{margin:34px 0 12px;font-size:22px;border-bottom:2px solid var(--line);padding-bottom:7px}h3{margin:22px 0 8px;font-size:17px}p{margin:8px 0}ul{margin-top:7px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:12px 0 18px}th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#eef3fb;font-weight:700}tr:last-child td{border-bottom:0}.tag{display:inline-block;padding:2px 9px;border-radius:999px;background:#e8f0ff;color:#1d4ed8;font-size:12px;margin:2px 4px 2px 0}.note{border-left:4px solid var(--blue);background:#eef5ff;padding:12px 15px;border-radius:7px;margin:12px 0}.warning{border-left-color:#d97706;background:#fff8e7}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:#f0f3f8;border-radius:5px;padding:2px 5px}.small{font-size:13px;color:var(--muted)}a{color:#1d4ed8;text-decoration:none}a:hover{text-decoration:underline}.footer{margin-top:36px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <header class="hero">
+    <h1>离散 Action / Physics Token 实验报告</h1>
+    <p>VLAct-PhysToken · 关键实验设计、已完成结果与当前训练状态</p>
+    <p class="small" style="color:#bfdbfe">最后整理：2026-09-29 · 详细原始记录见 <a style="color:#fff;text-decoration:underline" href="../docs/PHYSICAL_ACTION_TOKEN_PLAN.md">PHYSICAL_ACTION_TOKEN_PLAN.md</a></p>
+  </header>
+
+  <section class="grid">
+    <div class="card"><div class="label">当前主实验</div><div class="metric">P64-M32</div><div class="small">64 raw physics → 32 Pi memory</div></div>
+    <div class="card"><div class="label">当前训练规模</div><div class="metric">8 × 50</div><div class="small">8 tasks，85,098 clips</div></div>
+    <div class="card"><div class="label">全局 batch</div><div class="metric">128</div><div class="small">8 GPUs × 16 / GPU</div></div>
+    <div class="card"><div class="label">当前状态</div><div class="metric ok">运行中</div><div class="small">Joint P64-M32，step 约 295/20,000</div></div>
+  </section>
+
+  <h2>1. 研究问题与方法</h2>
+  <div class="note"><b>核心假设：</b>离散 action token 表示行为意图，离散 physics token 表示未来物理变化；联合预测两类 token 并条件化 Pi，可以提供可组合的控制中间层。</div>
+  <table><thead><tr><th>模块</th><th>当前设计</th><th>作用</th></tr></thead><tbody>
+    <tr><td>Action tokenizer</td><td>4 tokens，vocab 128</td><td>表示动作模式和行为意图</td></tr>
+    <tr><td>Physics tokenizer</td><td>16 temporal transitions × 4 spatial queries = 64 tokens，EMA-VQ K=128</td><td>表示未来视觉/物理变化</td></tr>
+    <tr><td>Pi conditioner</td><td>每 2 个 physics token 聚合，64 → 32 memory tokens</td><td>给连续动作生成器提供物理条件</td></tr>
+    <tr><td>Joint predictor</td><td>预测 4 action IDs + 64 physics IDs</td><td>在 VLM/reasoner 中联合建模</td></tr>
+  </tbody></table>
+
+  <h2>2. Benchmark、数据与训练预算</h2>
+  <ul>
+    <li>Benchmark：RoboTwin 八任务：click alarmclock、beat block hammer、open microwave、shake bottle、move playingcard away、pick dual bottles、handover block、place object basket。</li>
+    <li>原始数据：每任务 50 episodes，共 400 episodes，85,098 clips。</li>
+    <li>当前训练过滤后：360 episodes、76,109 clips；约 595 steps/epoch（global batch=128）。</li>
+    <li>正式筛选预算：20,000 optimizer steps，约 33.6 epochs；后续以 5k checkpoint 决定是否截断到 10k 或继续 20k。</li>
+    <li>正式主结果建议：8 tasks、40/5/5 episode split、50k steps、3 seeds。</li>
+  </ul>
+
+  <h2>3. 实验矩阵</h2>
+  <table><thead><tr><th>实验</th><th>Action token</th><th>Physics token</th><th>目的</th></tr></thead><tbody>
+    <tr><td>Continuous baseline</td><td>否</td><td>否</td><td>原始策略基线</td></tr>
+    <tr><td>Action-only</td><td>是</td><td>否</td><td>验证动作离散化价值</td></tr>
+    <tr><td>Physics-only</td><td>否</td><td>是</td><td>验证物理中间层价值</td></tr>
+    <tr><td>Joint action + physics</td><td>是</td><td>是</td><td>完整方法，核心比较</td></tr>
+    <tr><td>Shuffled physics</td><td>是</td><td>打乱</td><td>排除“增加 token 数就提升”</td></tr>
+  </tbody></table>
+  <h3>容量消融</h3>
+  <p><span class="tag">P256-M8</span><span class="tag">P64-M32</span><span class="tag">P64-M16</span><span class="tag">P16-M16</span><span class="tag">P64-M64</span></p>
+  <p>同时记录 token accuracy、codebook usage/perplexity、action MAE、rollout success、显存和推理延迟。</p>
+  <h3>信息与泛化消融</h3>
+  <ul><li>Oracle physics、predicted physics、shuffled physics。</li><li>Action shuffle/dropout、physics temporal/spatial shuffle、future-time reverse、颜色/纹理扰动、no-motion clips。</li><li>unseen object、seen action + unseen physics、unseen action composition。</li></ul>
+
+  <h2>4. 已完成结果</h2>
+  <h3>D53-100 硬性验收</h3>
+  <div class="grid">
+    <div class="card"><div class="label">D53 vs D52 action MAE</div><div class="metric ok">+0.086435%</div><div class="small">8/8 tasks 正向，8/8 gates 通过</div></div>
+    <div class="card"><div class="label">D53-100 vs D53-20</div><div class="metric ok">+0.072287%</div><div class="small">8/8 tasks 正向</div></div>
+    <div class="card"><div class="label">固定 seed rollout</div><div class="metric">2/3</div><div class="small">D53 vs D52：一胜、零负、两平</div></div>
+  </div>
+  <div class="warning note"><b>解释：</b>D53 的 action MAE 改善方向稳定，但绝对幅度小于千分之一；固定 seed rollout 只有 n=3，不能据此宣称成功率提升。</div>
+
+  <h3>P64 tokenizer</h3>
+  <table><thead><tr><th>指标</th><th>结果</th><th>判定</th></tr></thead><tbody>
+    <tr><td>训练</td><td>20,000 / 20,000 steps；无 OOM/traceback</td><td class="ok">通过</td></tr>
+    <tr><td>Codebook</td><td>active ratio=1.0；perplexity=124.616/128</td><td class="ok">通过</td></tr>
+    <tr><td>Temporal sensitivity</td><td>reverse token change=0.981876</td><td class="ok">通过</td></tr>
+    <tr><td>Validation RMSE</td><td>continuous=0.084895；no-motion=0.094688；reduction=10.42%</td><td class="ok">通过</td></tr>
+    <tr><td>Structure gate</td><td>unique ratio=0.954593；pairwise change=0.967423</td><td class="ok">通过</td></tr>
+  </tbody></table>
+  <p>Checkpoint：<span class="mono">artifacts/physical_language_tokenizers/p64_phi_residual_ema_64x128_full_steps20000/step-00020000.pt</span><br>SHA256：<span class="mono">632c065745d8ee2754b91cbe0ebe494b77ca09fc589bb741a43848f26d396605</span></p>
+
+  <h3>P64 联合 cache</h3>
+  <ul><li>85,098 rows；每条 4 action IDs + 64 physics IDs。</li><li>task-qualified key：<span class="mono">(task_id, episode_id, base_index)</span>。</li><li>SHA256：<span class="mono">17569e7ccebe4978b30d050553fcf8c41abd48523590f3fe14da486737e83082</span>。</li><li>已修复旧导出器和跨 task duplicate key 问题。</li></ul>
+
+  <h2>5. 当前训练状态与分析</h2>
+  <table><thead><tr><th>项目</th><th>当前值</th><th>分析</th></tr></thead><tbody>
+    <tr><td>Joint P64-M32</td><td>约 295/20,000 steps</td><td>正在 node3 八卡运行</td></tr>
+    <tr><td>Per-device / global batch</td><td>16 / 128</td><td>符合正式实验设置</td></tr>
+    <tr><td>action DiT loss</td><td>0.00659</td><td>已处于较低水平</td></tr>
+    <tr><td>action token CE</td><td>2.83</td><td>明显低于 128 类随机基线约 4.85</td></tr>
+    <tr><td>physics token CE</td><td>4.22</td><td>略低于随机基线，需继续观察</td></tr>
+    <tr><td>学习率</td><td>约 1e-4</td><td>当前没有发散迹象，不立即调整</td></tr>
+  </tbody></table>
+  <div class="note"><b>当前决策：</b>保持结构和学习率不变，以 5k checkpoint 做第一次 token accuracy + rollout 检查。如果 5k 已趋稳，后续对照可统一到 10k；如果 physics CE 仍下降，继续 20k。</div>
+
+  <h2>6. 结果判定标准与下一步</h2>
+  <ol>
+    <li>Joint 必须超过 action-only，才能支持两类 token 联合建模的核心主张。</li>
+    <li>Predicted physics 应接近 oracle physics，且明显优于 shuffled physics，才能排除未来信息泄漏。</li>
+    <li>P64-M32 应与 P256-M8、P64-M16 做同预算对照，判断 token 容量是否存在有效区间。</li>
+    <li>最终主结果使用至少 3 seeds，报告 mean ± std 和 paired bootstrap/permutation 区间。</li>
+    <li>论文先整理实验结果和方法草稿；外部投稿提交前由用户审阅最终版本。</li>
+  </ol>
+
+  <h2>7. 关键文件</h2>
+  <ul>
+    <li><a href="../docs/PHYSICAL_ACTION_TOKEN_PLAN.md">完整实验记录 Markdown</a></li>
+    <li><a href="../scripts/physical_tokens/run_p64_m32_joint_train.sh">P64-M32 训练 launcher</a></li>
+    <li><a href="../logs/p64_m32_predicted_steps20000_bs128_20260929.log">当前 joint 日志</a></li>
+    <li><a href="../artifacts/physical_language_tokenizers/p64_phi_residual_ema_64x128_full_steps20000/evaluation_per_task.json">P64 tokenizer 评估 JSON</a></li>
+    <li><a href="../artifacts/token_caches/robotwin_p64_predicted_action4_physics64_full_step20000.npz.manifest.json">联合 token cache manifest</a></li>
+  </ul>
+  <p class="footer">本页面是实验检查报告，不替代原始日志、checkpoint 或统计分析文件。结果结论以固定配置、完整 rollout 和多 seed 统计为准。</p>
+</main>
+</body>
+</html>

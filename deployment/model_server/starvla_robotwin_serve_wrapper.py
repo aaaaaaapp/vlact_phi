@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -36,9 +37,20 @@ class StarvlaRobotwinServeWrapper:
                 f"Multiple unnorm_keys in dataset_statistics.json: {list(norm_stats.keys())}"
             )
         self._default_unnorm_key = default_unnorm_key
-        self._use_wrap = "wrap" in str(
-            model_cfg.get("datasets", {}).get("vla_data", {}).get("data_mix", "")
-        )
+        # The current server follows the training data mix by default. The
+        # legacy adapter selected wrap from the checkpoint path instead; keep
+        # that behavior available for paired protocol comparisons.
+        unnorm_mode = os.environ.get("ROBOTWIN_ACTION_UNNORM_MODE", "config")
+        if unnorm_mode not in {"config", "legacy", "wrap", "stats"}:
+            raise ValueError(f"Invalid ROBOTWIN_ACTION_UNNORM_MODE={unnorm_mode!r}")
+        if unnorm_mode == "config":
+            self._use_wrap = "wrap" in str(
+                model_cfg.get("datasets", {}).get("vla_data", {}).get("data_mix", "")
+            ).lower()
+        elif unnorm_mode == "legacy":
+            self._use_wrap = "wrap" in self._ckpt_path.lower()
+        else:
+            self._use_wrap = unnorm_mode == "wrap"
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -60,6 +72,7 @@ class StarvlaRobotwinServeWrapper:
                 "action_normalization_mode",
                 vla_cfg.get("normalization_mode", "min_max"),
             ),
+            "action_unnorm_mode": "wrap" if self._use_wrap else "stats",
         }
 
     def reset_memory(self) -> None:

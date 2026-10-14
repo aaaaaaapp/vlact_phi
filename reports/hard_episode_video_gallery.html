@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Physical Action Token · Hard Episode Video Gallery</title>
+<style>
+:root{--bg:#09111f;--panel:#101c2f;--panel2:#14243b;--ink:#e9f1fb;--muted:#94a8c1;--line:#263b58;--green:#55d6a4;--red:#ff758f;--amber:#f5c66b;--blue:#7fb4ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1000px 500px at 10% -10%,#19355b 0,transparent 70%),var(--bg);color:var(--ink);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1500px;margin:auto;padding:34px 28px 70px}.eyebrow{color:var(--green);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:11px}
+h1{font-size:clamp(28px,4vw,52px);line-height:1.05;margin:10px 0 12px;letter-spacing:-.04em}h2{margin:0;font-size:20px}p{color:var(--muted);margin:6px 0}.hero{display:flex;justify-content:space-between;gap:28px;align-items:end;margin-bottom:24px}.hero-copy{max-width:820px}.legend{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid var(--line);border-radius:999px;padding:5px 10px;color:var(--muted);font-size:12px}.pill b{color:var(--ink)}
+.toolbar{position:sticky;top:0;z-index:5;background:rgba(9,17,31,.88);backdrop-filter:blur(14px);padding:12px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:24px}.toolbar button,.toolbar select{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:8px 12px;border-radius:9px;cursor:pointer}.toolbar button:hover{border-color:var(--blue)}.toolbar .active{background:#214c72;border-color:var(--blue)}.toolbar .spacer{flex:1}.hint{color:var(--muted);font-size:12px}
+.episode{background:linear-gradient(145deg,rgba(20,36,59,.96),rgba(12,23,39,.96));border:1px solid var(--line);border-radius:18px;padding:18px;margin:18px 0 26px;box-shadow:0 16px 38px #0002}.episode-head{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:14px}.episode-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.seed{font-family:ui-monospace,monospace;color:var(--amber)}.score{color:var(--muted);font-size:12px}.score strong{color:var(--ink)}
+.columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.method{min-width:0;background:rgba(9,17,31,.45);border:1px solid var(--line);border-radius:14px;padding:12px}.method h3{margin:0 0 10px;font-size:15px;display:flex;justify-content:space-between}.method h3 span{font-size:11px;color:var(--muted);font-weight:500}.video-list{display:grid;gap:10px}.video-card{background:#08101c;border-radius:10px;overflow:hidden;border:1px solid #22344d}.video-card video{display:block;width:100%;aspect-ratio:16/10;background:#02060b}.video-meta{display:flex;justify-content:space-between;align-items:center;padding:7px 9px;font-size:11px;color:var(--muted)}.status{font-weight:700;padding:2px 7px;border-radius:999px}.success{color:#081d16;background:var(--green)}.failure{color:#2b0b13;background:var(--red)}.unlabeled{color:#2a2109;background:var(--amber)}.empty{color:var(--muted);border:1px dashed var(--line);border-radius:9px;padding:18px;text-align:center;font-size:12px}
+.note{margin-top:25px;padding:13px 15px;border:1px solid #604f29;background:#211d12;border-radius:12px;color:#d9c796;font-size:12px}.note code{color:#fff2bf}
+@media(max-width:1000px){.columns{grid-template-columns:1fr}.hero{display:block}.hero .legend{margin-bottom:10px}}
+</style>
+</head>
+<body>
+<main>
+<section class="hero">
+  <div class="hero-copy">
+    <div class="eyebrow">VLAct-PhysToken / visual diagnosis</div>
+    <h1>Eight hard episodes, three policies, side by side.</h1>
+    <p>这些是之前 Pure PI 表现很差的 episode。页面保留了每次录制到的视频，并按同一 task/seed 对齐比较 <b>Pure PI</b>、<b>Action-only</b> 和 <b>Joint</b>。</p>
+    <div class="legend"><span class="pill"><b>绿色</b> success</span><span class="pill"><b>红色</b> failure</span><span class="pill"><b>黄色</b> 原始视频未带 success/failure 后缀</span><span class="pill">视频来自 node3 评测结果，已复制到本报告目录</span></div>
+  </div>
+</section>
+<div class="toolbar">
+  <button class="filter active" data-filter="all">全部 8 个</button>
+  <button class="filter" data-filter="click_alarmclock">click_alarmclock</button>
+  <button class="filter" data-filter="click_bell">click_bell</button>
+  <button class="filter" data-filter="hanging_mug">hanging_mug</button>
+  <button class="filter" data-filter="press_stapler">press_stapler</button>
+  <span class="spacer"></span><button id="play">▶ 播放当前页</button><button id="pause">Ⅱ 暂停当前页</button>
+  <label class="hint">速度 <select id="speed"><option>0.5</option><option selected>1</option><option>1.5</option><option>2</option></select>x</label>
+</div>
+<div id="gallery"></div>
+<div class="note">说明：不同方法的评测重试次数由实际记录决定；页面不补造缺失视频。<code>unlabeled</code> 表示评测器生成了视频，但文件名没有追加结果后缀，不能仅凭文件名判定成败。</div>
+</main>
+<script src="hard_episode_video_manifest.js"></script>
+<script>
+const metrics={
+ click_alarmclock:{'100005':{pure:'2/3',action:'0/3',joint:'0/3'},'100017':{pure:'0/3',action:'2/3',joint:'3/3'},'100018':{pure:'1/3',action:'0/3',joint:'3/3'},'100022':{pure:'0/3',action:'2/3',joint:'3/3'}},
+ click_bell:{'100008':{pure:'0/3',action:'0/3',joint:'0/3'}},
+ hanging_mug:{'100002':{pure:'0/3',action:'0/3',joint:'0/2'},'100003':{pure:'0/3',action:'1/3',joint:'0/1'}},
+ press_stapler:{'100053':{pure:'0/3',action:'1/3',joint:'2/3'}}
+};
+const labels={pure:'Pure PI',action:'Action-only',joint:'Joint'};
+const order=['click_alarmclock','click_bell','hanging_mug','press_stapler'];
+let active='all';
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function render(){
+ const grouped={}; for(const x of window.HARD_VIDEO_MANIFEST){const k=x.task+'|'+x.seed;(grouped[k]??=[]).push(x)}
+ const keys=Object.keys(grouped).sort((a,b)=>{const [ta,sa]=a.split('|'),[tb,sb]=b.split('|');return order.indexOf(ta)-order.indexOf(tb)||Number(sa)-Number(sb)});
+ document.querySelector('#gallery').innerHTML=keys.filter(k=>active==='all'||k.startsWith(active+'|')).map(k=>{
+  const [task,seed]=k.split('|'), mm=metrics[task]?.[seed]||{};
+  const cols=['pure','action','joint'].map(method=>{
+   const items=(grouped[k]||[]).filter(x=>x.method===method).sort((a,b)=>a.rep-b.rep||a.src.localeCompare(b.src));
+   return '<section class="method"><h3>'+labels[method]+' <span>'+esc(mm[method]||'—')+'</span></h3><div class="video-list">'+(items.length?items.map((x,i)=>'<article class="video-card"><video controls preload="metadata" src="hard_episode_videos/'+encodeURI(x.src)+'"></video><div class="video-meta"><span>repeat '+x.rep+(i>0&&x.rep===items[i-1].rep?' · extra':'')+'</span><span class="status '+x.status+'">'+x.status+'</span></div></article>').join(''):'<div class="empty">没有找到录制视频</div>')+'</div></section>'
+  }).join('');
+  return '<section class="episode" data-task="'+task+'"><div class="episode-head"><div class="episode-title"><h2>'+esc(task)+'</h2><span class="seed">seed '+esc(seed)+'</span></div><div class="score">汇总：Pure <strong>'+esc(mm.pure||'—')+'</strong> · Action <strong>'+esc(mm.action||'—')+'</strong> · Joint <strong>'+esc(mm.joint||'—')+'</strong></div></div><div class="columns">'+cols+'</div></section>';
+ }).join('');
+}
+document.querySelectorAll('.filter').forEach(b=>b.onclick=()=>{active=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>x.classList.toggle('active',x===b));render()});
+document.querySelector('#play').onclick=()=>document.querySelectorAll('video').forEach(v=>{v.playbackRate=+document.querySelector('#speed').value;v.play().catch(()=>{})});
+document.querySelector('#pause').onclick=()=>document.querySelectorAll('video').forEach(v=>v.pause());
+document.querySelector('#speed').onchange=e=>document.querySelectorAll('video').forEach(v=>v.playbackRate=+e.target.value);
+render();
+</script>
+</body>
+</html>

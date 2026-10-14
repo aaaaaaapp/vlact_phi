@@ -1,4 +1,5 @@
 import json
+import os
 from collections import deque
 from pathlib import Path
 from typing import Dict, Optional
@@ -85,12 +86,22 @@ class ModelClient:
             )
         self.action_chunk_size = int(server_action_chunk_size)
         self.state_norm_stats = self.get_state_stats(self.unnorm_key, policy_ckpt_path=policy_ckpt_path)
+        # Keep the existing QwenPI behavior by default; allow explicit
+        # state-free runs to reproduce the upstream VLAct adapter protocol.
+        send_state = os.environ.get("ROBOTWIN_SEND_STATE", "auto").lower()
+        if send_state not in {"auto", "0", "1"}:
+            raise ValueError(f"Invalid ROBOTWIN_SEND_STATE={send_state!r}")
         model_config, _ = read_mode_config(Path(policy_ckpt_path))
         framework_name = str((model_config.get("framework") or {}).get("name", ""))
-        self._send_state_to_server = "qwenpi" in framework_name.lower()
+        self._send_state_to_server = (
+            "qwenpi" in framework_name.lower()
+            if send_state == "auto"
+            else send_state == "1"
+        )
         self.raw_actions = None
         print(
             f"*** server_preprocesses_robotwin: {self._server_preprocesses_robotwin}, "
+            f"send_state_to_server: {self._send_state_to_server}, "
             f"server_meta: {server_meta} ***"
         )
 

@@ -7,7 +7,7 @@ cd "${repo_root}"
 python_bin="${STARVLA_PYTHON:-/mnt/jfzn/liujn/miniconda3/envs/vlact/bin/python}"
 accelerate_bin="${python_bin%/python}/accelerate"
 steps="${P64_POLICY_STEPS:-20000}"
-run_id="${P64_POLICY_RUN_ID:-qwenpi_v4_p64_m32_distill_medium_seed42_steps${steps}}"
+run_id="${P64_POLICY_RUN_ID:-qwenpi_v4_p64_m32_distill_medium_gate_tanh02_seed42_steps${steps}}"
 checkpoint="results/Checkpoints/${run_id}/checkpoints/steps_${steps}_pytorch_model.pt"
 export P64_ACTION_DISTILL_WEIGHT_START="${P64_ACTION_DISTILL_WEIGHT_START:-0.2}"
 export P64_ACTION_DISTILL_WEIGHT_END="${P64_ACTION_DISTILL_WEIGHT_END:-0.02}"
@@ -35,6 +35,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}" WANDB_MODE=disab
   --framework.discrete_conditioning.max_physics_tokens 64 \
   --framework.discrete_conditioning.physics_group_size 2 \
   --framework.discrete_conditioning.physics_vocab_size 128 \
+  --framework.discrete_conditioning.pi_gate_bound_mode tanh \
+  --framework.discrete_conditioning.pi_gate_alpha_max 0.2 \
   --framework.joint_token_prediction.physics_token_count 64 \
   --framework.joint_token_prediction.physics_vocab_size 128 \
   --framework.joint_token_prediction.condition_source predicted \

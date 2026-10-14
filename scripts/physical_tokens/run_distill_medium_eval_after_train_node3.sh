@@ -9,10 +9,10 @@ set -Eeuo pipefail
 #   DRY_RUN=1 bash run_distill_medium_eval_after_train_node3.sh
 
 ROOT="/mnt/jfzn/liujn/code/VLAct-PhysToken"
-RUN_ID="qwenpi_v4_p64_m32_distill_medium_seed42_steps20000"
+RUN_ID="${P64_POLICY_RUN_ID:-qwenpi_v4_p64_m32_distill_medium_gate_tanh02_seed42_steps20000}"
 CKPT="$ROOT/results/Checkpoints/$RUN_ID/checkpoints/steps_20000_pytorch_model.pt"
 TRAIN_LOG="$ROOT/logs/distill_medium_train_node3_retry3.log"
-ROBOTWIN_PATH="/mnt/jfzn/liujn/code/Starvla/Starvla/playground/RoboTwin_eval"
+ROBOTWIN_PATH="/mnt/jfzn/liujn/code/RoboTwin-main"
 ROBOTWIN_PYTHON="/mnt/jfzn/liujn/robotwin_env/bin/python"
 STARVLA_PATH="/mnt/jfzn/liujn/code/Starvla/Starvla"
 RUNNER="$ROOT/scripts/physical_tokens/run_policy_single_seed.sh"
@@ -62,7 +62,7 @@ preflight() {
 }
 
 training_is_running() {
-  pgrep -f 'train_starvla\.py.*qwenpi_v4_p64_m32_distill_medium_seed42_steps20000' >/dev/null 2>&1
+  pgrep -f "train_starvla\\.py.*${RUN_ID}" >/dev/null 2>&1
 }
 
 wait_for_final_checkpoint() {
@@ -109,6 +109,11 @@ run_one() {
 }
 
 run_hard_panel() {
+  if [[ ! -d "$ROBOTWIN_PATH/assets/background_texture/unseen" ]] ||
+     [[ -z "$(find "$ROBOTWIN_PATH/assets/background_texture/unseen" -maxdepth 1 -type f -print -quit 2>/dev/null)" ]]; then
+    log "HARD_PANEL_SKIPPED missing randomized-eval assets: $ROBOTWIN_PATH/assets/background_texture/unseen"
+    return 2
+  fi
   local -a pids=()
   local status=0 i
   for i in "${!HARD_TASKS[@]}"; do
@@ -149,11 +154,11 @@ main() {
   fi
   wait_for_final_checkpoint
   [[ -s "$CKPT" ]] || { log "checkpoint disappeared"; exit 1; }
-  log "starting hard 8-episode panel"
-  run_hard_panel || log "hard panel had failures; continuing to four-task panel"
-  log "starting four-task demo_clean panel"
   local status=0
-  run_four_task_panel || status=$?
+  log "starting hard 8-episode panel"
+  run_hard_panel || { status=1; log "hard panel incomplete; continuing to four-task panel"; }
+  log "starting four-task demo_clean panel"
+  run_four_task_panel || status=1
   log "ALL_DONE status=$status output=$OUT"
   exit "$status"
 }

@@ -94,6 +94,15 @@ def load_policy_model(args):
     model.set_physics_condition_enabled(
         not args.disable_physics_conditioning
     )
+    gate_mode = getattr(args, "pi_gate_bound_mode", None)
+    gate_alpha_max = getattr(args, "pi_gate_alpha_max", None)
+    if gate_mode is not None:
+        if gate_alpha_max is not None and gate_alpha_max <= 0:
+            raise ValueError("--pi-gate-alpha-max must be positive")
+        model.pi_gate_bound_mode = gate_mode
+        if gate_alpha_max is not None:
+            model.pi_gate_alpha_max = gate_alpha_max
+        logging.info("Pi residual gate at inference: mode=%s alpha_max=%s", model.pi_gate_bound_mode, model.pi_gate_alpha_max)
     return model
 
 
@@ -146,6 +155,8 @@ if __name__ == "__main__":
         default=None,
     )
     parser.add_argument("--joint-soft-temperature", type=float, default=None)
+    parser.add_argument("--pi-gate-bound-mode", choices=("none", "tanh", "sigmoid"), default=None)
+    parser.add_argument("--pi-gate-alpha-max", type=float, default=None)
     parser.add_argument("--disable-discrete-conditioning", action="store_true")
     parser.add_argument("--disable-physics-conditioning", action="store_true")
     parser.add_argument("--selector-threshold", type=float, default=None)
