@@ -45,3 +45,8 @@ __pycache__/
 *.lock
 *.tmp
 *.swp
+
+# Project-wide generated artifacts
+*.log
+*.pkl
+*.pickle
