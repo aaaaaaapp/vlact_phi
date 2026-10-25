@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -77,6 +78,42 @@ def make_loader(
     )
 
 
+@torch.inference_mode()
+def collect_position_code_usage(
+    model: SpatiotemporalPhysicalLanguageTokenizer,
+    loader: DataLoader,
+    device: torch.device,
+) -> list[dict[str, float | int]]:
+    """Count IDs across the full held-out set at each token position."""
+    codebook_size = model.codebook_size
+    position_counts = torch.zeros(model.num_tokens, codebook_size, device=device, dtype=torch.long)
+    offsets = torch.arange(model.num_tokens, device=device) * codebook_size
+    for batch in loader:
+        ids, _, _ = model.encode(
+            batch["features"].to(device, non_blocking=True),
+            batch["valid_mask"].to(device, non_blocking=True),
+        )
+        position_counts += torch.bincount(
+            (ids.long() + offsets).flatten(),
+            minlength=model.num_tokens * codebook_size,
+        ).reshape(model.num_tokens, codebook_size)
+    result = []
+    for counts in position_counts:
+        probabilities = counts.float() / counts.sum().clamp_min(1)
+        entropy = -(probabilities * (probabilities + 1e-10).log()).sum()
+        result.append({
+            "active_codes": int((counts > 0).sum().cpu()),
+            "entropy_nats": float(entropy.cpu()),
+            "normalized_entropy": float((entropy / math.log(codebook_size)).cpu()),
+            "perplexity": float(entropy.exp().cpu()),
+            "top10_fraction": float(
+                (counts.topk(min(10, codebook_size)).values.sum() / counts.sum().clamp_min(1)).cpu()
+            ),
+            "total_tokens": int(counts.sum().cpu()),
+        })
+    return result
+
+
 def main() -> None:
     args = parse_args()
     dataset = SpatiotemporalFeatureDataset(args.input, args.action_target_cache)
@@ -131,6 +168,7 @@ def main() -> None:
         "metrics": metrics,
         "macro_metrics": macro_metrics,
         "task_metrics": task_metrics,
+        "position_code_usage": collect_position_code_usage(model, loader, device),
     }
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output is not None:

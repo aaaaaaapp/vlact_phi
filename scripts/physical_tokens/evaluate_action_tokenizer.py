@@ -46,15 +46,37 @@ class CacheDataset(torch.utils.data.Dataset):
         self.actions = self.data["actions"]
         self.valid = self.data["action_valid_mask"]
         self.episodes = self.data["episode_ids"]
+        self.task_ids = self.data["task_ids"] if "task_ids" in self.data.files else np.zeros(len(self.actions), dtype=np.int64)
+        self.task_names = (
+            tuple(str(value) for value in self.data["task_names"].tolist())
+            if "task_names" in self.data.files else ("single_task",)
+        )
 
     def __len__(self) -> int:
         return len(self.actions)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return (
             torch.from_numpy(np.array(self.actions[index], dtype=np.float32)),
             torch.from_numpy(np.array(self.valid[index], dtype=np.bool_)),
+            torch.tensor(int(self.task_ids[index]), dtype=torch.long),
         )
+
+
+def summarize_code_counts(counts: torch.Tensor) -> dict[str, float | int]:
+    probabilities = counts.float() / counts.sum().clamp_min(1)
+    entropy = -(probabilities * (probabilities + 1e-10).log()).sum()
+    return {
+        "active_codes": int((counts > 0).sum().cpu()),
+        "active_ratio": float((counts > 0).float().mean().cpu()),
+        "entropy_nats": float(entropy.cpu()),
+        "normalized_entropy": float((entropy / math.log(len(counts))).cpu()),
+        "top10_fraction": float(
+            (counts.topk(min(10, len(counts))).values.sum() / counts.sum().clamp_min(1)).cpu()
+        ),
+        "perplexity": float(entropy.exp().cpu()),
+        "total_tokens": int(counts.sum().cpu()),
+    }
 
 
 def held_out_indices(
@@ -109,6 +131,8 @@ def evaluate(args: argparse.Namespace) -> dict:
     angular_dims = torch.tensor(parse_ints(args.angular_dims), device=device)
     gripper_dims = torch.tensor(parse_ints(args.gripper_dims), device=device)
     code_counts = torch.zeros(model.codebook_size, dtype=torch.long, device=device)
+    task_counts = torch.zeros(len(dataset.task_names), model.codebook_size, dtype=torch.long, device=device)
+    position_counts = torch.zeros(model.num_tokens, model.codebook_size, dtype=torch.long, device=device)
     joint_error_sum = torch.zeros((), device=device)
     joint_count = torch.zeros((), device=device)
     velocity_error_sum = torch.zeros((), device=device)
@@ -116,14 +140,20 @@ def evaluate(args: argparse.Namespace) -> dict:
     gripper_error_sum = torch.zeros((), device=device)
     gripper_correct = torch.zeros((), device=device)
     gripper_count = torch.zeros((), device=device)
+    task_sums = torch.zeros(len(dataset.task_names), 6, device=device)
 
-    for actions, valid in loader:
+    for actions, valid, task_ids in loader:
         actions = actions.to(device)
         valid = valid.to(device)
+        task_ids = task_ids.to(device)
         output = model(actions, gripper_dims=gripper_dims.tolist())
         prediction = output["reconstruction"]
         ids = output["token_ids"]
         code_counts += torch.bincount(ids.flatten(), minlength=model.codebook_size)
+        for task_id in task_ids.unique().tolist():
+            task_counts[task_id] += torch.bincount(ids[task_ids == task_id].flatten(), minlength=model.codebook_size)
+        for position in range(model.num_tokens):
+            position_counts[position] += torch.bincount(ids[:, position], minlength=model.codebook_size)
 
         joint_difference = prediction.index_select(-1, angular_dims) - actions.index_select(-1, angular_dims)
         joint_difference = torch.remainder(joint_difference + math.pi, 2 * math.pi) - math.pi
@@ -143,9 +173,18 @@ def evaluate(args: argparse.Namespace) -> dict:
         gripper_error_sum += (predicted_gripper - target_gripper).abs().masked_select(gripper_mask).sum()
         gripper_correct += ((predicted_gripper >= 0.5) == (target_gripper >= 0.5)).masked_select(gripper_mask).sum()
         gripper_count += gripper_mask.sum()
+        for task_id in task_ids.unique().tolist():
+            selected = task_ids == task_id
+            selected_joint = joint_mask[selected]
+            selected_velocity = velocity_mask[selected]
+            selected_gripper = gripper_mask[selected]
+            task_sums[task_id, 0] += joint_difference[selected].abs().masked_select(selected_joint).sum()
+            task_sums[task_id, 1] += selected_joint.sum()
+            task_sums[task_id, 2] += (predicted_velocity[selected] - target_velocity[selected]).abs().masked_select(selected_velocity).sum()
+            task_sums[task_id, 3] += selected_velocity.sum()
+            task_sums[task_id, 4] += ((predicted_gripper[selected] >= 0.5) == (target_gripper[selected] >= 0.5)).masked_select(selected_gripper).sum()
+            task_sums[task_id, 5] += selected_gripper.sum()
 
-    probabilities = code_counts.float() / code_counts.sum().clamp_min(1)
-    perplexity = torch.exp(-(probabilities * (probabilities + 1e-10).log()).sum())
     joint_mae_rad = joint_error_sum / joint_count.clamp_min(1)
     return {
         "checkpoint": str(args.checkpoint.resolve()),
@@ -159,10 +198,20 @@ def evaluate(args: argparse.Namespace) -> dict:
         "joint_velocity_mae_rad": float((velocity_error_sum / velocity_count.clamp_min(1)).cpu()),
         "gripper_mae": float((gripper_error_sum / gripper_count.clamp_min(1)).cpu()),
         "gripper_accuracy": float((gripper_correct / gripper_count.clamp_min(1)).cpu()),
-        "active_codes": int((code_counts > 0).sum().cpu()),
-        "active_ratio": float((code_counts > 0).float().mean().cpu()),
-        "perplexity": float(perplexity.cpu()),
-        "total_tokens": int(code_counts.sum().cpu()),
+        **summarize_code_counts(code_counts),
+        "task_code_usage": {
+            name: summarize_code_counts(task_counts[task_id])
+            for task_id, name in enumerate(dataset.task_names)
+        },
+        "task_metrics": {
+            name: {
+                "joint_wrapped_mae_deg": float(torch.rad2deg(task_sums[task_id, 0] / task_sums[task_id, 1].clamp_min(1)).cpu()),
+                "joint_velocity_mae_rad": float((task_sums[task_id, 2] / task_sums[task_id, 3].clamp_min(1)).cpu()),
+                "gripper_accuracy": float((task_sums[task_id, 4] / task_sums[task_id, 5].clamp_min(1)).cpu()),
+            }
+            for task_id, name in enumerate(dataset.task_names)
+        },
+        "position_code_usage": [summarize_code_counts(counts) for counts in position_counts],
     }
 
 

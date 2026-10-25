@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -342,9 +343,16 @@ def evaluate(model, loader: DataLoader, device: torch.device, world_size: int) -
     if world_size > 1:
         dist.all_reduce(token_counts, op=dist.ReduceOp.SUM)
     probabilities = token_counts / token_counts.sum().clamp_min(1)
-    metrics["perplexity"] = float(
-        torch.exp(-(probabilities * (probabilities + 1e-10).log()).sum()).cpu()
+    entropy = -(probabilities * (probabilities + 1e-10).log()).sum()
+    metrics["perplexity"] = float(entropy.exp().cpu())
+    metrics["entropy_nats"] = float(entropy.cpu())
+    metrics["normalized_entropy"] = float((entropy / math.log(raw_model.codebook_size)).cpu())
+    metrics["top10_fraction"] = float(
+        (token_counts.topk(min(10, raw_model.codebook_size)).values.sum()
+         / token_counts.sum().clamp_min(1)).cpu()
     )
+    metrics["active_codes"] = int((token_counts > 0).sum().cpu())
+    metrics["total_tokens"] = int(token_counts.sum().cpu())
     metrics["active_ratio"] = float((token_counts > 0).float().mean().cpu())
     metrics["rmse"] = metrics.pop("quantized_mse") ** 0.5
     metrics["continuous_rmse"] = metrics.pop("continuous_mse") ** 0.5
