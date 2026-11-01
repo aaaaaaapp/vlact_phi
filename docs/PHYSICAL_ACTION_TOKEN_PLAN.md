@@ -4594,3 +4594,31 @@ node003 和 node004 最终四任务队列分别为
 `logs/distill_medium_state_wrap_recovered_rt_node3_four_uniqueports_20261013/` 和
 `logs/distill_medium_state_wrap_tanh02_recovered_rt_node4_four_uniqueports_20261013/`。曾启动的 Pure PI／
 训练 tanh 同协议补跑已按用户指示立即停止，未完成数据未纳入上述任何统计。
+
+### 21.97 训练 tanh 与 Pure PI 八训练任务完整闭环测评（2026-10-29 至 2026-10-30，已完成）
+
+按用户要求，在 node002 启动 `qwenpi_v4_p64_m32_gate_tanh02_seed42_steps20000` 与历史 Pure PI 100k
+checkpoint 的八任务 matched rollout。任务精确取自 `robotwin_phystoken_d15_8tasks_wrap32`：
+`click_alarmclock`、`beat_block_hammer`、`open_microwave`、`shake_bottle`、
+`move_playingcard_away`、`pick_dual_bottles`、`handover_block`、`place_object_basket`。
+每任务先在 `demo_clean` 下从 scene seed `100000` 起筛出 100 个专家预检通过的固定 seed，
+两模型按同一清单各评测一次；固定评测中再次被专家预检跳过的 seed 不计为失败，最终只在共同实际执行
+的 seed 上统计配对成功率、win/loss/tie。使用恢复版旧 RoboTwin、RT 渲染、state 输入、wrap 动作解码，
+每回合保存视频。每 20 seed 一批落盘，可从已完成批次恢复。初始在 node002 GPU0/GPU7 跑
+Pure PI/tanh，GPU4 预筛后续任务；随后扩展至 node001、node002、node004 共 14 个测评 worker
+并行。node003 当时系统负载异常，未加入测评。不重复运行历史四任务/困难集的旧结果作为本次分母。
+
+初始入口：`scripts/physical_tokens/run_tanh02_pure_full8_node2.sh`；扩展后的分片 worker：
+`scripts/physical_tokens/run_tanh02_full8_worker.sh`。80/80 个模型分片已完成，八任务各 100 个 seed
+的清单已保存。两模型共同实际执行的 734 个 seed 上，Pure PI 为 `702/734`，训练 tanh 为 `579/734`；
+tanh 救回 23 个 Pure PI 失败 episode，但丢失 146 个 Pure PI 成功 episode。完整任务表、交叉统计、
+结果目录与可复用 seed 文件路径见 `docs/ROBOTWIN_TANH02_PURE_FULL8_RESULTS.md`；seed 清单见
+`docs/ROBOTWIN_TANH02_PURE_FULL8_SEEDS.md` 和 `docs/robotwin_tanh02_pure_full8_seeds.json`。
+
+由于原始预筛清单在实际 rollout 时有偶发专家预检跳过，734 不是完整的 8 x 100 共同分母。随后在
+`logs/tanh02_pure_full8_supplement_20261030/` 发现并补测新 scene seed，直到八任务均达到双方实际执行 100 个。
+最终严格 800 配对结果为 Pure PI `759/800 (94.88%)`、训练 tanh `631/800 (78.88%)`；tanh 在 Pure PI 成功的
+759 个 episode 中保留 604 个（79.58%），回归 155 个，在 Pure PI 失败的 41 个 episode 中救回 27 个（65.85%），
+仍失败 14 个。最终可直接复用的共同执行 seed 文件为
+`docs/robotwin_tanh02_pure_full8_executed_800_seeds.json`，对应逐任务结果表为
+`docs/ROBOTWIN_TANH02_PURE_FULL8_EXECUTED_800.md`。原始 734 配对结果不改写，作为初始运行的历史记录。

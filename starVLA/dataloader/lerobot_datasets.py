@@ -189,6 +189,7 @@ def make_LeRobotSingleDataset(
             dataset,
             DiscreteTokenCache(Path(str(token_cache_path))),
             task_name=data_name,
+            drop_missing=bool(effective_data_cfg.get("discrete_token_cache_drop_missing", False)),
         )
     return dataset
 

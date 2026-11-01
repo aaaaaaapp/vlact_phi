@@ -9,7 +9,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .action_tokenizer import EMAVectorQuantizer, FiniteScalarQuantizer
+from .action_tokenizer import (
+    EMAVectorQuantizer,
+    FiniteScalarQuantizer,
+    OfficialFiniteScalarQuantizer,
+    ImprovedFiniteScalarQuantizer,
+)
 
 
 def _masked_mean(value: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -56,14 +61,21 @@ class SpatiotemporalPhysicalLanguageTokenizer(nn.Module):
         if token_routing == "spatial_aligned":
             spatial_side = math.isqrt(spatial_tokens)
             query_side = math.isqrt(queries_per_transition)
+            if queries_per_transition == 8:
+                # Keep the horizontal resolution of the 4x4 feature grid:
+                # each of the 2x4 queries owns a vertical pair of cells.
+                query_rows, query_columns = 2, 4
+            else:
+                query_rows = query_columns = query_side
             if (
                 spatial_side * spatial_side != spatial_tokens
-                or query_side * query_side != queries_per_transition
-                or spatial_side % query_side
+                or query_rows * query_columns != queries_per_transition
+                or spatial_side % query_rows
+                or spatial_side % query_columns
             ):
                 raise ValueError(
-                    "spatial_aligned routing requires square spatial/query grids and "
-                    "the spatial grid side divisible by the query grid side"
+                    "spatial_aligned routing requires a square spatial grid and "
+                    "a nested square or 2x4 query grid"
                 )
         self.feature_dim = int(feature_dim)
         self.num_frames = int(num_frames)
@@ -95,10 +107,11 @@ class SpatiotemporalPhysicalLanguageTokenizer(nn.Module):
             encoder_attention_mask = torch.full(
                 (queries_per_transition, spatial_tokens), float("-inf")
             )
-            group_side = spatial_side // query_side
+            group_rows = spatial_side // query_rows
+            group_columns = spatial_side // query_columns
             for spatial_index in range(spatial_tokens):
                 row, column = divmod(spatial_index, spatial_side)
-                query_index = (row // group_side) * query_side + column // group_side
+                query_index = (row // group_rows) * query_columns + column // group_columns
                 encoder_attention_mask[query_index, spatial_index] = 0.0
             decoder_attention_mask = encoder_attention_mask.transpose(0, 1).contiguous()
         else:
@@ -137,6 +150,10 @@ class SpatiotemporalPhysicalLanguageTokenizer(nn.Module):
             )
         elif quantizer == "fsq":
             self.quantizer = FiniteScalarQuantizer(latent_dim, fsq_levels)
+        elif quantizer == "fsq_official":
+            self.quantizer = OfficialFiniteScalarQuantizer(latent_dim, fsq_levels)
+        elif quantizer == "ifsq":
+            self.quantizer = ImprovedFiniteScalarQuantizer(latent_dim, fsq_levels)
         else:
             raise ValueError(f"unsupported quantizer: {quantizer}")
 

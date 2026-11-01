@@ -26,7 +26,7 @@ import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed
+from accelerate.utils import GradientAccumulationPlugin, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -48,9 +48,15 @@ logger = get_logger(__name__)
 def create_accelerator(cfg) -> Accelerator:
     gradient_accumulation_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
     deepspeed_plugin = DeepSpeedPlugin(gradient_accumulation_steps=gradient_accumulation_steps)
+    # ZeRO-2 partitions gradients and rejects the no_sync context that Accelerate
+    # otherwise enters on accumulation microsteps. DeepSpeed handles accumulation.
+    accumulation_plugin = GradientAccumulationPlugin(
+        num_steps=gradient_accumulation_steps,
+        sync_each_batch=gradient_accumulation_steps > 1,
+    )
     accelerator = Accelerator(
         deepspeed_plugin=deepspeed_plugin,
-        gradient_accumulation_steps=gradient_accumulation_steps,
+        gradient_accumulation_plugin=accumulation_plugin,
     )
     accelerator.print(accelerator.state)
     return accelerator
@@ -150,6 +156,8 @@ class VLATrainer(TrainerUtils):
             self.vla_train_dataloader,
         )
 
+        self._restore_dual_ar_full_state()
+
         self._init_wandb()
 
     def _calculate_total_batch_size(self):
@@ -175,6 +183,12 @@ class VLATrainer(TrainerUtils):
         """Initialize checkpoint directory and handle checkpoint loading."""
         self.checkpoint_dir = os.path.join(self.config.output_dir, "checkpoints")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        full_state_resume_dir = getattr(self.config.trainer, "dual_ar_full_state_resume_dir", None)
+        if full_state_resume_dir and _as_bool(getattr(self.config.trainer, "is_resume", False)):
+            raise ValueError("dual_ar_full_state_resume_dir is incompatible with legacy is_resume")
+        if full_state_resume_dir and getattr(self.config.trainer, "dual_ar_trainable_checkpoint", None):
+            raise ValueError("full-state resume cannot also load a trainable-only checkpoint")
 
         pretrained_checkpoint = getattr(self.config.trainer, "pretrained_checkpoint", None)
         is_resume = getattr(self.config.trainer, "is_resume", False)
@@ -203,6 +217,9 @@ class VLATrainer(TrainerUtils):
 
         if pretrained_checkpoint:
             reload_modules = getattr(self.config.trainer, "reload_modules", None)
+            expanded_vocab_warmstart = _as_bool(
+                getattr(self.config.trainer, "expanded_vocab_warmstart", False)
+            )
             extension_prefixes = getattr(
                 self.config.trainer, "strict_extension_missing_prefixes", None
             )
@@ -210,7 +227,14 @@ class VLATrainer(TrainerUtils):
             if random_init_action_model:
                 logger.info("`random_init_action_model=True`, skipping `action_model` when loading checkpoint.")
                 ignore_modules = "action_model"
-            if extension_prefixes:
+            if expanded_vocab_warmstart:
+                if reload_modules or extension_prefixes or ignore_modules:
+                    raise ValueError("expanded-vocab warm-start cannot combine with other loading modes")
+                if not hasattr(self.model, "initialize_expanded_vocab_pretrained"):
+                    raise ValueError("framework has no expanded-vocabulary pretrained loader")
+                metadata = self.model.initialize_expanded_vocab_pretrained(pretrained_checkpoint)
+                logger.info(f"Strictly warm-started expanded-vocabulary reasoner: {metadata}")
+            elif extension_prefixes:
                 if reload_modules or ignore_modules:
                     raise ValueError(
                         "strict extension loading cannot be combined with reload_modules "
@@ -239,6 +263,30 @@ class VLATrainer(TrainerUtils):
         else:
             logger.info("No pretrained checkpoint provided. Starting training from scratch.")
             self.completed_steps = 0
+
+        trainable_checkpoint = getattr(self.config.trainer, "dual_ar_trainable_checkpoint", None)
+        initial_steps = int(getattr(self.config.trainer, "dual_ar_initial_completed_steps", 0) or 0)
+        if initial_steps:
+            if not trainable_checkpoint or full_state_resume_dir or is_resume:
+                raise ValueError("dual_ar_initial_completed_steps requires a trainable-only checkpoint warm-start")
+            if not 0 < initial_steps < int(self.config.trainer.max_train_steps):
+                raise ValueError("dual_ar_initial_completed_steps must be between 0 and max_train_steps")
+        if trainable_checkpoint:
+            if not pretrained_checkpoint or not _as_bool(
+                getattr(self.config.trainer, "expanded_vocab_warmstart", False)
+            ):
+                raise ValueError("dual_ar_trainable_checkpoint requires expanded-vocab base warm-start")
+            if not hasattr(self.model, "initialize_trainable_checkpoint"):
+                raise ValueError("framework cannot restore a trainable-only checkpoint")
+            metadata = self.model.initialize_trainable_checkpoint(trainable_checkpoint)
+            logger.info(f"Restored dual-AR trainable checkpoint: {metadata}")
+            if initial_steps:
+                self.completed_steps = initial_steps
+                logger.warning(
+                    "Cross-world-size warm-start at step %s: model weights restored, "
+                    "optimizer moments reset; LR scheduler will advance to that optimization step",
+                    initial_steps,
+                )
 
         dual_action_init_checkpoint = getattr(
             self.config.trainer, "dual_action_probe_init_checkpoint", None
@@ -354,6 +402,66 @@ class VLATrainer(TrainerUtils):
         self.accelerator.load_state(checkpoint_path)
         self.accelerator.print(f"Resumed from checkpoint: {checkpoint_path}")
 
+    def _restore_dual_ar_full_state(self):
+        """Resume model, ZeRO optimizer and the external LR scheduler together."""
+        resume_dir = getattr(self.config.trainer, "dual_ar_full_state_resume_dir", None)
+        if not resume_dir:
+            return
+        resume_dir = Path(str(resume_dir)).resolve()
+        if not resume_dir.is_dir() or not (resume_dir / "latest").is_file():
+            raise FileNotFoundError(f"Missing DeepSpeed full-state checkpoint: {resume_dir}")
+        if not hasattr(self.model, "load_checkpoint"):
+            raise TypeError("dual_ar_full_state_resume_dir requires a DeepSpeed engine")
+        loaded_path, client_state = self.model.load_checkpoint(
+            str(resume_dir), load_module_strict=False,
+            load_optimizer_states=True, load_lr_scheduler_states=False,
+        )
+        if not loaded_path or not isinstance(client_state, dict):
+            raise RuntimeError(f"Could not load DeepSpeed state from {resume_dir}")
+        required = {"completed_steps", "lr_scheduler", "global_batch_size", "world_size",
+                    "micro_batch_size", "gradient_accumulation_steps"}
+        missing = required - set(client_state)
+        if missing:
+            raise ValueError(f"Resume client state is incomplete: {sorted(missing)}")
+        expected = {
+            "global_batch_size": self.total_batch_size,
+            "world_size": self.accelerator.num_processes,
+            "micro_batch_size": int(self.config.datasets.vla_data.per_device_batch_size),
+            "gradient_accumulation_steps": int(self.config.trainer.gradient_accumulation_steps),
+        }
+        for key, value in expected.items():
+            if int(client_state[key]) != value:
+                raise ValueError(f"Resume {key} mismatch: saved {client_state[key]}, current {value}")
+        completed_steps = int(client_state["completed_steps"])
+        if not 0 < completed_steps < int(self.config.trainer.max_train_steps):
+            raise ValueError(f"Invalid resume step {completed_steps} for max_train_steps")
+        self.lr_scheduler.load_state_dict(client_state["lr_scheduler"])
+        self.completed_steps = completed_steps
+        logger.info(f"Resumed DeepSpeed model/optimizer and LR scheduler from {loaded_path}; step {completed_steps}")
+
+    def _save_dual_ar_full_state(self):
+        if not _as_bool(getattr(self.config.trainer, "dual_ar_save_full_state", False)):
+            return
+        if not hasattr(self.model, "save_checkpoint"):
+            raise TypeError("dual_ar_save_full_state requires a DeepSpeed engine")
+        state_dir = Path(self.config.output_dir) / "training_state"
+        client_state = {
+            "completed_steps": self.completed_steps,
+            "lr_scheduler": self.lr_scheduler.state_dict(),
+            "global_batch_size": self.total_batch_size,
+            "world_size": self.accelerator.num_processes,
+            "micro_batch_size": int(self.config.datasets.vla_data.per_device_batch_size),
+            "gradient_accumulation_steps": int(self.config.trainer.gradient_accumulation_steps),
+        }
+        # Every ZeRO rank must participate. Frozen Qwen weights come from the
+        # immutable base warm-start and need not be duplicated in each save.
+        self.model.save_checkpoint(
+            str(state_dir), tag=f"step_{self.completed_steps:08d}",
+            client_state=client_state, exclude_frozen_parameters=True,
+        )
+        self.accelerator.wait_for_everyone()
+        self.accelerator.print(f"✅ Full training state saved at {state_dir} (step {self.completed_steps})")
+
     def _save_checkpoint(self):
         """Save current training state."""
         if self.accelerator.is_main_process:
@@ -394,6 +502,7 @@ class VLATrainer(TrainerUtils):
                 logger.info("✅ Configuration files saved")
 
         self.accelerator.wait_for_everyone()
+        self._save_dual_ar_full_state()
 
     def _log_metrics(self, metrics):
         """Record training metrics."""
@@ -428,7 +537,9 @@ class VLATrainer(TrainerUtils):
         self._log_training_config()
         self._create_data_iterators()
         progress_bar = tqdm(
-            range(self.config.trainer.max_train_steps), disable=not self.accelerator.is_local_main_process
+            total=self.config.trainer.max_train_steps,
+            initial=self.completed_steps,
+            disable=not self.accelerator.is_local_main_process,
         )
 
         while self.completed_steps < self.config.trainer.max_train_steps:
@@ -552,6 +663,8 @@ class VLATrainer(TrainerUtils):
 
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
+        grad_norm = None
+        log_grad_norm = _as_bool(getattr(self.config.trainer, "log_grad_norm", False))
         with self.accelerator.accumulate(self.model):
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
@@ -561,15 +674,38 @@ class VLATrainer(TrainerUtils):
             self.accelerator.backward(total_loss)
 
             if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:
-                self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
+                grad_norm = self.accelerator.clip_grad_norm_(
+                    self.model.parameters(), self.config.trainer.gradient_clipping
+                )
 
             self.optimizer.step()
-            self.lr_scheduler.step()
+            if self.accelerator.sync_gradients and log_grad_norm:
+                # Accelerate returns None for DeepSpeed clipping. ZeRO-2 caches
+                # the unscaled global L2 norm before clipping on the engine,
+                # after its optimizer step at the accumulation boundary.
+                if hasattr(self.model, "get_global_grad_norm"):
+                    grad_norm = self.model.get_global_grad_norm()
+                if grad_norm is None:
+                    raise RuntimeError("global grad norm is unavailable after the optimizer step")
+                if torch.is_tensor(grad_norm):
+                    if grad_norm.numel() != 1:
+                        raise RuntimeError("global grad norm must be a scalar")
+                    grad_norm = grad_norm.detach().item()
+                grad_norm = float(grad_norm)
+                if not np.isfinite(grad_norm):
+                    raise FloatingPointError(f"non-finite global grad norm: {grad_norm}")
+            # The scheduler is deliberately not passed to accelerator.prepare().
+            # With gradient accumulation, this loop runs once per microbatch;
+            # advance the scheduler only when the optimizer actually updates.
+            if self.accelerator.sync_gradients:
+                self.lr_scheduler.step()
             self.optimizer.zero_grad()
 
         metrics = {
             "action_dit_loss": action_loss.item(),
         }
+        if self.accelerator.sync_gradients and log_grad_norm:
+            metrics["grad_norm"] = grad_norm
         if "action_dit_loss" in output_dict:
             metrics["action_dit_loss"] = output_dict["action_dit_loss"].item()
         if "oft_loss" in output_dict:
@@ -580,6 +716,7 @@ class VLATrainer(TrainerUtils):
             metrics["pi_loss"] = output_dict["pi_loss"].item()
         for name in (
             "action_token_ce_loss",
+            "dual_token_ce_loss",
             "action_distill_loss",
             "physics_token_ce_loss",
             "physics_aligned_loss",

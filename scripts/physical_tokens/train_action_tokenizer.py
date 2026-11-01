@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--quantizer", choices=("ema_vq", "fsq"), default="ema_vq")
+    parser.add_argument("--quantizer", choices=("ema_vq", "fsq", "ifsq"), default="ema_vq")
     parser.add_argument("--num-tokens", type=int, default=8)
     parser.add_argument("--codebook-size", type=int, default=512)
     parser.add_argument("--fsq-levels", default="8,8,8")

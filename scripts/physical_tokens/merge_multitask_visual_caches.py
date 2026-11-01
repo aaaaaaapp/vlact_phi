@@ -55,10 +55,13 @@ def main() -> None:
             names = [str(value) for value in cache["task_names"].tolist()]
             if names != [expected_name] or manifest.get("data_names") != [expected_name]:
                 raise ValueError(f"task mismatch in {path}: {names} / {manifest.get('data_names')}")
+            # NPZ members are decompressed on every access. Read the largest
+            # member once, then reuse it for metadata checks and concatenation.
+            features = cache["frame_features"]
             current = {
                 "offsets": cache["offsets"].copy(),
-                "feature_tail": tuple(cache["frame_features"].shape[1:]),
-                "feature_dtype": str(cache["frame_features"].dtype),
+                "feature_tail": tuple(features.shape[1:]),
+                "feature_dtype": str(features.dtype),
                 "camera": manifest["camera"],
                 "base_vlm_config_sha256": manifest["base_vlm_config_sha256"],
                 "checkpoint_sha256": manifest["pretrained_checkpoint"]["sha256"],
@@ -77,7 +80,6 @@ def main() -> None:
             local_task_ids = cache["task_ids"]
             if not np.all(local_task_ids == 0):
                 raise ValueError(f"single-task cache has nonzero task IDs: {path}")
-            features = cache["frame_features"].copy()
             indices = cache["source_frame_indices"].copy()
             valid = cache["future_valid_mask"].copy()
             episodes = cache["episode_ids"].copy()

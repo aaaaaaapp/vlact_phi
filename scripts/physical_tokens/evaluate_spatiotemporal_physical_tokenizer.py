@@ -32,6 +32,7 @@ from train_spatiotemporal_physical_tokenizer import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--feature-array-cache", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--action-target-cache", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
@@ -116,7 +117,9 @@ def collect_position_code_usage(
 
 def main() -> None:
     args = parse_args()
-    dataset = SpatiotemporalFeatureDataset(args.input, args.action_target_cache)
+    dataset = SpatiotemporalFeatureDataset(
+        args.input, args.action_target_cache, args.feature_array_cache
+    )
     _, validation_indices = split_complete_indices(
         dataset,
         parse_ints(args.validation_episodes),
@@ -156,7 +159,7 @@ def main() -> None:
         for key in metrics
     }
     report = {
-        "metric_schema_version": 2,
+        "metric_schema_version": 3,
         "input": str(args.input.resolve()),
         "checkpoint": str(args.checkpoint.resolve()),
         "checkpoint_sha256": sha256_file(args.checkpoint.resolve()),

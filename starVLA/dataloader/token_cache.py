@@ -77,23 +77,50 @@ class DiscreteTokenCache:
                 result[name] = np.asarray(self.data[name][row], dtype=np.int64)
         return result
 
+    def contains(self, episode_id: int, base_index: int, task_name: str | None = None) -> bool:
+        if self._task_name_to_id is not None:
+            if task_name not in self._task_name_to_id:
+                return False
+            key = (self._task_name_to_id[task_name], int(episode_id), int(base_index))
+        else:
+            key = (int(episode_id), int(base_index))
+        return key in self._row_by_key
+
 
 class TokenConditionedDataset(Dataset):
     """Dataset wrapper that joins cached token IDs using the source step key."""
 
     def __init__(
-        self, dataset: Dataset, token_cache: DiscreteTokenCache, task_name: str | None = None
+        self, dataset: Dataset, token_cache: DiscreteTokenCache, task_name: str | None = None,
+        drop_missing: bool = False,
     ) -> None:
         if not hasattr(dataset, "all_steps"):
             raise TypeError("wrapped dataset must expose all_steps")
         self.dataset = dataset
         self.token_cache = token_cache
         self.task_name = task_name
+        self._selected_indices = (
+            [index for index, (episode_id, base_index) in enumerate(dataset.all_steps)
+             if token_cache.contains(episode_id, base_index, task_name)]
+            if drop_missing else None
+        )
+        if self._selected_indices is not None and not self._selected_indices:
+            raise ValueError(f"token cache has no matching samples for {task_name!r}")
+        self._selected_steps = (
+            [dataset.all_steps[index] for index in self._selected_indices]
+            if self._selected_indices is not None else None
+        )
 
     def __len__(self) -> int:
-        return len(self.dataset)
+        return len(self._selected_indices) if self._selected_indices is not None else len(self.dataset)
+
+    @property
+    def all_steps(self) -> list[tuple[int, int]]:
+        return self._selected_steps if self._selected_steps is not None else self.dataset.all_steps
 
     def __getitem__(self, index: int) -> dict:
+        if self._selected_indices is not None:
+            index = self._selected_indices[index]
         episode_id, base_index = self.dataset.all_steps[index]
         sample = dict(self.dataset[index])
         return self.attach_discrete_tokens(sample, episode_id, base_index)
@@ -112,6 +139,6 @@ class TokenConditionedDataset(Dataset):
         return sample
 
     def __getattr__(self, name: str):
-        if name in {"dataset", "token_cache", "task_name"}:
+        if name in {"dataset", "token_cache", "task_name", "_selected_indices", "_selected_steps"}:
             raise AttributeError(name)
         return getattr(self.dataset, name)

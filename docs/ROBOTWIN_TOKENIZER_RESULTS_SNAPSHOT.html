@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoboTwin 动作 / 物理 Tokenizer：阶段性结果</title>
+  <style>
+    :root { color-scheme: light; --ink:#18304b; --muted:#617388; --line:#dbe5ed; --bg:#f3f7fa; --card:#fff; --blue:#1266a7; --teal:#087b70; --amber:#a8650a; --pale:#eaf5f2; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif; }
+    .wrap { max-width:1180px; margin:auto; padding:30px 22px 64px; }
+    header { background:linear-gradient(130deg,#112d4c,#176a82); color:white; border-radius:20px; padding:30px 34px; box-shadow:0 12px 28px #18304b18; }
+    h1 { margin:0 0 6px; font-size:clamp(25px,3.5vw,38px); line-height:1.25; }
+    header p { margin:4px 0; color:#d8e8f0; }
+    h2 { margin:0 0 13px; font-size:22px; }
+    h3 { margin:0 0 8px; font-size:17px; }
+    .meta { margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; }
+    .pill { display:inline-block; border:1px solid #ffffff55; border-radius:999px; padding:4px 11px; font-size:12px; color:white; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:15px; margin:18px 0; }
+    .card, section { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 4px 14px #18304b08; }
+    .card { padding:18px 20px; }
+    .card .big { display:block; font-size:29px; font-weight:760; line-height:1.25; letter-spacing:-.02em; }
+    .card p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+    .bar { margin-top:13px; height:8px; background:#e6edf3; border-radius:99px; overflow:hidden; }
+    .fill { height:100%; background:var(--teal); border-radius:99px; }
+    section { margin-top:17px; padding:22px 24px; }
+    .lead { border-left:5px solid var(--teal); background:var(--pale); border-radius:10px; padding:14px 18px; margin:14px 0; }
+    .lead p { margin:4px 0; }
+    .warn { border-left:5px solid #e8a52c; background:#fff7e8; border-radius:10px; padding:12px 16px; margin:14px 0; }
+    .muted { color:var(--muted); }
+    .small { font-size:13px; }
+    .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:11px; }
+    table { border-collapse:collapse; width:100%; min-width:760px; font-variant-numeric:tabular-nums; }
+    th,td { padding:9px 11px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+    th:first-child,td:first-child { text-align:left; }
+    thead { background:#edf4f8; color:#435a71; }
+    tbody tr:nth-child(even) { background:#f9fbfd; }
+    tbody tr:last-child td { border-bottom:0; }
+    .best { font-weight:750; color:#076b5d; }
+    .label { font-weight:650; }
+    .tag { font-size:11px; padding:2px 7px; border-radius:99px; background:#e6f4ee; color:#0a715e; margin-left:5px; }
+    .tag.pending { background:#fff1d8; color:#985a08; }
+    .split { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    ul { margin:8px 0 0; padding-left:21px; }
+    li { margin:5px 0; }
+    a { color:var(--blue); text-underline-offset:3px; }
+    code { background:#edf2f6; border-radius:4px; padding:1px 4px; }
+    footer { color:var(--muted); padding:20px 3px 0; font-size:12px; }
+    @media (max-width:800px) { .grid,.split { grid-template-columns:1fr; } section { padding:18px 15px; } .wrap { padding:14px 10px 30px; } header { padding:22px 18px; } }
+    @media print { body { background:white; } .wrap { max-width:none; padding:0; } header,section,.card { box-shadow:none; break-inside:avoid; } a { color:inherit; } }
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>RoboTwin 动作 / 物理 Tokenizer 对比</h1>
+    <p>EMA-VQ · FSQ · iFSQ ｜阶段性结果快照，不是三方法最终排名</p>
+    <div class="meta"><span class="pill">更新于 2026-10-28 北京时间</span><span class="pill">50 个任务</span><span class="pill">物理 47,797 留出 clips</span><span class="pill">动作 55,797 留出 chunks</span><span class="pill">当前 AR 目标：动作 32 · 物理 64 / K2048</span></div>
+  </header>
+
+  <section id="selected-lengths">
+    <h2>当前自回归后训练所用的 token 方案 <span class="tag">32+64 已开训</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>模态</th><th>当前 AR 目标</th><th>对应已训模型</th><th>仍须验证</th></tr></thead>
+      <tbody>
+        <tr><td>动作</td><td class="best">32 ID / 32 步 chunk</td><td>全任务 EMA-VQ K525，batch 128、20k-step checkpoint；8-token 作为匹配基线保留</td><td>下游 VLM/策略收益</td></tr>
+        <tr><td>物理</td><td class="best">64 ID / 17 帧 clip；K2048</td><td>空间对齐 EMA-VQ，64-token K2048 checkpoint</td><td>下游可预测性与策略收益</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">物理 K2048 模型的完整留出差分 RMSE 为 0.085326、有效码 2048/2048；同为 64 token 的 K1024 RMSE 为 0.085883。K2048 约低 0.65%，但每 ID 固定码长多 1 bit。选择 K2048 是用户的人为决定，不等于已证明它最易被 VLM 学会。当前 32 动作 + 64 物理 ID 已逐键合并并进入严格分模态 LoRA 自回归后训练，固定输出 <strong>96 个 ID</strong>；截至 2026-10-28，ACP 四卡主任务已保存 step 1000，单卡主任务也在运行，但尚无完整 20k 留出或 rollout 结论。动作与物理使用不同的时间采样和解码器。</p>
+  </section>
+
+  <div class="grid" aria-label="实验进度">
+    <div class="card"><span class="big">50 / 50</span><strong>动作任务已评估</strong><p>K525 三方法 × 3 个随机种子的 8-token 基线；另完成 batch128 的 8 vs 32 匹配对照。</p><div class="bar"><div class="fill" style="width:100%"></div></div></div>
+    <div class="card"><span class="big">50 / 50</span><strong>物理特征已对齐</strong><p>17 帧视觉特征；已合并并与动作缓存逐 key 精确对齐。</p><div class="bar"><div class="fill" style="width:100%"></div></div></div>
+    <div class="card"><span class="big">8 / 8</span><strong>新增高 K 物理模型已评估</strong><p>EMA 5 组、FSQ 2 组、iFSQ 1 组；均完成 20,000 step 与完整留出评估。</p><div class="bar"><div class="fill" style="width:100%"></div></div></div>
+  </div>
+
+  <section>
+    <h2>先看结论</h2>
+    <div class="lead">
+      <p><strong>动作 tokenizer：</strong>在严格相同 K525、相同数据划分和训练预算下，EMA-VQ 的重建损失与关节误差在 seed 42/43/44 均明显低于 FSQ、iFSQ。</p>
+      <p><strong>物理 tokenizer：</strong>高 K 扫描已完成。已测 EMA-VQ K32768 的差分 RMSE 最低，为 0.076681；它也是已测 EMA 档位中首个 pooled 利用率不足 100% 的配置：32629/32768。K16384 仍为 16384/16384。</p>
+      <p><strong>iFSQ 与 FSQ：</strong>动作小幅收益跨种子不稳定；物理三组同 levels 成对比较几乎持平或略差，尚无稳定优势。</p>
+      <p><strong>token 方案：</strong>物理 64/128/256 的最终 RMSE 依次下降；用户选择物理 64 token 且 K2048。动作同 batch128 的 32-token 相比 8-token 在 45/50 任务降低 RMSE、47/50 任务降低关节 wrap MAE，但 pooled RMSE 与相邻步增量 MAE 反而更差；用户仍明确选择 32-token 作为当前 AR 目标，8-token 留作基线。</p>
+    </div>
+    <div class="warn"><strong>结论范围：</strong>EMA-VQ 是当前已跑配置的离线 tokenizer 重建领先者；物理高 K 目前只有 seed42，也没有下游策略 rollout，不能宣称最终机器人任务赢家。K32768 相比 K16384 RMSE 只再降约 0.77%，固定码长却增加 1 bit/token。</div>
+  </section>
+
+  <section id="token-length">
+    <h2>序列长度对照：64 / 128 / 256 token 每 clip</h2>
+    <p class="muted small">三档均为 EMA-VQ、50 任务、seed42、batch32、相同完整 episode 留出集与空间对齐路由；均为 20,000-step checkpoint 的独立完整留出评估。17 帧给出 16 组相邻帧差分；64=16×4、128=16×8、256=16×16。K 是每个位置可选的 ID 种类，不是序列长度。</p>
+    <h3>已完成的 20,000-step 最终对照</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>K</th><th>长度</th><th>差分 RMSE ↓</th><th>未来特征 RMSE ↓</th><th>连续通道 RMSE ↓</th><th>量化误差 gap ↓</th><th>有效码</th><th>Perplexity</th><th>Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td>1024</td><td>64</td><td>0.085883</td><td>0.152478</td><td>0.079518</td><td>0.006365</td><td>1024/1024</td><td>987.55</td><td>1.87%</td></tr>
+        <tr><td>1024</td><td>128</td><td>0.083388</td><td>0.149273</td><td>0.075400</td><td>0.007988</td><td>1024/1024</td><td>986.66</td><td>1.85%</td></tr>
+        <tr><td>1024</td><td>256</td><td class="best">0.080381</td><td class="best">0.144942</td><td>0.071052</td><td>0.009329</td><td>1024/1024</td><td>973.21</td><td>2.19%</td></tr>
+        <tr><td class="best">2048 · 已选</td><td class="best">64</td><td>0.085326</td><td>0.151243</td><td>0.078589</td><td>0.006737</td><td>2048/2048</td><td>1959.52</td><td>0.96%</td></tr>
+        <tr><td>2048</td><td>128</td><td>0.082686</td><td>0.147667</td><td>0.073900</td><td>0.008787</td><td>2048/2048</td><td>1956.08</td><td>1.08%</td></tr>
+        <tr><td>2048</td><td>256</td><td class="best">0.079519</td><td class="best">0.143288</td><td>0.069545</td><td>0.009974</td><td>2048/2048</td><td>1933.75</td><td>1.26%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">同 K 下，64→256 的 RMSE 分别降低约 6.41%（K1024）和 6.81%（K2048）；反过来以 256 为基准，64 的误差分别高 6.84% / 7.30%。两种百分比的分母不同，不能混用。两个 K 的 256 模型在 50/50 任务 RMSE 均优于对应的 64 模型；代价是物理 ID 序列增长 4 倍。</p>
+    <p class="small muted">128-token 在 K1024/K2048 的 50/50 个任务均优于 64-token、均不及 256-token。用户最终选择物理 64 token/clip、K2048，以减少后续 VLM 输出长度并明确词表容量；本页重建最优不等于下游最优。</p>
+    <div class="lead"><p><strong>为什么长度增加能降误差？</strong>64-token 每个时间段只有 2×2 个 query，每个 query 汇总原 4×4 特征图中的 2×2 区域；256-token 每个特征位置都有自己的 query，保留更细的空间差异。128-token 使用 2×4 query 网格，每个 query 汇总上下相邻两格，水平方向保留 4 格分辨率。因此它提供了位于两者之间的空间信息容量；最终 RMSE 也位于两者之间。这里改变的不只是压缩率，还包括 query 数、空间分组和解码结构，不能声称“纯粹增加 token 数”独立造成全部收益。</p></div>
+    <p class="small muted"><strong>对 VLM 的意义：</strong>固定长度自回归预测需要输出 64/128/256 个 ID；较短序列可能降低训练/推理成本与误差累积，较长序列带来更好离线重建。每个 ID 的候选数 K 不变时，码本利用率 100% 只说明 pooled 留出集每个 ID 至少出现一次，不能说明 128 最易预测。当前没有相同 VLM 预算下的预测准确率或 rollout，对下游最优长度不作结论。</p>
+  </section>
+
+  <section id="action-8-vs-32">
+    <h2>当前动作长度选择：同 batch 128 的 8 vs 32 token</h2>
+    <p class="muted small">两组均为 EMA-VQ K525、seed42、20,000 优化步、batch128；同一 55,797 段 episode 留出动作（每段 32×14），只改变每段的离散码数。原始报告见下方链接。pooled 指合并全部样本后计算；宏平均是 50 个任务先分别计算再等权平均，两者不可混用。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>完整留出指标</th><th>8 token / chunk</th><th>32 token / chunk</th><th>判断</th></tr></thead>
+      <tbody>
+        <tr><td>重建 Smooth L1 ↓</td><td>0.005173</td><td class="best">0.004836</td><td>32 低约 6.5%</td></tr>
+        <tr><td>pooled 动作 RMSE ↓</td><td class="best">0.104830</td><td>0.106263</td><td>32 高约 1.4%</td></tr>
+        <tr><td>50 任务宏平均 RMSE ↓</td><td>0.103212</td><td class="best">0.101251</td><td>32 在 45/50 任务更低</td></tr>
+        <tr><td>关节 wrapped MAE ↓</td><td>3.3379°</td><td class="best">3.0994°</td><td>32 低约 7.1%；47/50 任务更低</td></tr>
+        <tr><td>关节相邻步增量 MAE ↓</td><td class="best">0.009422 rad/步</td><td>0.009668 rad/步</td><td>32 高约 2.6%；仅 19/50 任务更低</td></tr>
+        <tr><td>有效码 / K ↑</td><td class="best">511/525</td><td>504/525</td><td>均为完整留出集 pooled 计数</td></tr>
+        <tr><td>Entropy (nats) ↑ / Perplexity ↑</td><td>5.9310 / 376.53</td><td class="best">5.9792 / 395.13</td><td>32 的码频分布更均匀</td></tr>
+        <tr><td>Top10 占比 ↓</td><td>7.553%</td><td class="best">6.835%</td><td>32 较不集中</td></tr>
+        <tr><td>后续 AR 总输出位置</td><td class="best">8+64=72</td><td>32+64=96</td><td>总长增加 33.3%；动作段长度 ×4</td></tr>
+      </tbody>
+    </table></div>
+    <div class="warn"><strong>为什么仍用 32？</strong>这是用户明确选定的当前后训练候选，不是“32 在所有离线指标上胜出”。少数任务退化足以使 pooled RMSE 反向；例如 <code>press_stapler</code> 从 0.1747 升至 0.3395。动态误差也变差。应待相同预算的 AR 留出和机器人 rollout 后再判断端到端好坏；当前 8-token 缓存与 checkpoint 未覆盖。</div>
+  </section>
+
+  <section id="action-length">
+    <h2>历史动作长度对照：batch 256 的 8 vs 16 token</h2>
+    <p class="muted small">同为 EMA-VQ K525、seed42、batch256、20,000 step、相同 50 任务与 55,797 个留出 chunks。每个 chunk 为 32×14 动作；只改变时序汇聚后的 token 数。表中均为最终 checkpoint 的独立完整留出评估，不是训练 batch 指标。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>指标</th><th>8 token/chunk</th><th>16 token/chunk</th><th>怎么看</th></tr></thead>
+      <tbody>
+        <tr><td>重建 Smooth L1 ↓</td><td>0.004821</td><td class="best">0.004503</td><td>16 降 6.58%</td></tr>
+        <tr><td>动作 RMSE ↓</td><td>0.099993</td><td class="best">0.096116</td><td>16 降 3.88%</td></tr>
+        <tr><td>关节 wrapped MAE ↓</td><td>3.247°</td><td class="best">3.131°</td><td>16 降 3.59%</td></tr>
+        <tr><td>关节相邻步增量 MAE ↓</td><td class="best">0.009291 rad/步</td><td>0.009491 rad/步</td><td>16 升 2.15%，变差</td></tr>
+        <tr><td>夹爪准确率 ↑</td><td>99.8656%</td><td class="best">99.9108%</td><td>16 高 0.0451 百分点</td></tr>
+        <tr><td>有效码 / K</td><td>508/525</td><td>507/525</td><td>基本持平</td></tr>
+        <tr><td>Perplexity ↑</td><td>363.36</td><td>376.63</td><td>16 pooled 分布更均衡</td></tr>
+        <tr><td>Entropy (nats) ↑</td><td>5.8954</td><td>5.9313</td><td>与 perplexity 同源</td></tr>
+        <tr><td>Top10 占比 ↓</td><td>8.57%</td><td>7.65%</td><td>16 较不集中</td></tr>
+        <tr><td>每 chunk ID 数</td><td class="best">8</td><td>16</td><td>VLM 输出长度 ×2</td></tr>
+      </tbody>
+    </table></div>
+    <div class="lead"><p><strong>原因与取舍：</strong>16 个时序槽位保留更多动作细节，重建 RMSE 在 46/50 任务下降、关节角 MAE 在 43/50 任务下降；但相邻步增量 MAE 只在 19/50 任务更好。这个指标计算预测与真实关节角的相邻差分之差的绝对值，再对有效关节/步骤平均；未除时间间隔，所以是 rad/步，而非物理速度 rad/s。单步角度更准不保证相邻差分更准；“16-token 引入抖动”目前只是可能机制，并未得到直接证明。K525 不变时，每个 ID 固定存储需 10 bit，8→16 对应 80→160 bit/chunk，VLM 预测位置也翻倍。此处旧 batch256 对照说明 16 的离线重建更好，但不参与上节 batch128 的 8 vs 32 直接排名；当前 AR 目标已改为 32-token。</p></div>
+  </section>
+
+  <section id="codebook-scan">
+    <h2>一眼看码本 K：EMA-VQ 容量扫描</h2>
+    <p class="muted small">这张表只改变每个物理 token 可选的码本大小 K；每个 clip 始终输出 256 个 token。全部为 seed42、20,000 step，同一 50 任务的 47,797 个完整留出 clips（共 12,236,032 个 token）。RMSE 越低越好；“比前一档改善”是相邻 K 的 pooled RMSE 相对下降，不是策略成功率。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>码本 K</th><th>差分 RMSE ↓</th><th>比前一档改善</th><th>有效码 / K</th><th>Perplexity</th><th>归一化 Entropy</th><th>Top10 占比 ↓</th><th>固定 bit/token</th></tr></thead>
+      <tbody>
+        <tr><td>256</td><td>0.082253</td><td>基线</td><td>256/256</td><td>245.16</td><td>0.99220</td><td>7.16%</td><td>8</td></tr>
+        <tr><td>512</td><td>0.081241</td><td>1.23%</td><td>512/512</td><td>488.48</td><td>0.99246</td><td>4.09%</td><td>9</td></tr>
+        <tr><td>1024</td><td>0.080381</td><td>1.06%</td><td>1024/1024</td><td>973.21</td><td>0.99266</td><td>2.19%</td><td>10</td></tr>
+        <tr><td>2048</td><td>0.079519</td><td>1.07%</td><td>2048/2048</td><td>1933.75</td><td>0.99247</td><td>1.26%</td><td>11</td></tr>
+        <tr><td>4096</td><td>0.078682</td><td>1.05%</td><td>4096/4096</td><td>3830.60</td><td>0.99195</td><td>0.72%</td><td>12</td></tr>
+        <tr><td>8192</td><td>0.077955</td><td>0.92%</td><td>8192/8192</td><td>7557.19</td><td>0.99105</td><td>0.42%</td><td>13</td></tr>
+        <tr><td>16384</td><td>0.077277</td><td>0.87%</td><td>16384/16384</td><td>14621.08</td><td>0.98827</td><td>0.25%</td><td>14</td></tr>
+        <tr><td class="best">32768 · 已测重建最低</td><td class="best">0.076681</td><td>0.77%</td><td class="best">32629/32768</td><td>27095.47</td><td>0.98172</td><td>0.17%</td><td>15</td></tr>
+      </tbody>
+    </table></div>
+    <div class="lead"><p><strong>怎么选：</strong>K32768 在这组离线重建中最好，却不是已验证的 VLM 最优码本。相对 K16384，它每个 token 多占 1 bit，RMSE 只再降 0.77%；相对 K2048，它的固定码长从 11 增至 15 bit/token。K32768 是已测档位中首个 pooled 非满利用值，缺 139 个码，但不能据此把它当成最佳 K。</p></div>
+    <p class="small muted">固定 bit/token 为二次幂 K 的 log₂(K)，未计文件封装或熵编码；每次 K 翻倍，在固定 256-token 序列上增加 256 bit/clip。Perplexity 原值随 K 上限一起变大，不能跨容量直接当作“更好学”的证据。完整指标和逐任务结果见下方原始 JSON。</p>
+  </section>
+
+  <section>
+    <h2>① 全 50 任务动作：同容量 K525</h2>
+    <p class="muted small">每组：493,990 训练 chunks、55,797 留出 chunks（250 个留出 task-episode）、8 个 token/chunk、batch 256、20,000 step。下表码分布来自完整留出集累计，不是 batch 均值；K525 表示每个 token 最多 525 种 ID。</p>
+    <h3>seed 42：重建与码分布</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>方法</th><th>Smooth L1 ↓</th><th>关节 MAE ↓</th><th>有效码 ↑</th><th>Perplexity ↑</th><th>Entropy ↑</th><th>Top10 占比 ↓</th></tr></thead>
+      <tbody>
+        <tr><td class="label">EMA-VQ <span class="tag">动作重建领先</span></td><td class="best">0.004821</td><td class="best">3.247°</td><td>508/525</td><td class="best">363.36</td><td class="best">5.895</td><td class="best">8.57%</td></tr>
+        <tr><td class="label">FSQ 3,5,5,7</td><td>0.011424</td><td>5.068°</td><td>490/525</td><td>260.47</td><td>5.562</td><td>13.41%</td></tr>
+        <tr><td class="label">iFSQ 3,5,5,7</td><td>0.011342</td><td>5.083°</td><td>505/525</td><td>266.86</td><td>5.587</td><td>13.49%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">EMA-VQ 的 pooled 码分布更均衡，但这不等于每个任务内部都更均衡；见下方“码利用率如何读”。</p>
+    <h3>重复实验：相同 K525，seed 42 / 43 / 44</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Seed</th><th>方法</th><th>Smooth L1 ↓</th><th>关节 MAE ↓</th><th>Perplexity ↑</th><th>有效码 ↑</th><th>Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td>42</td><td>EMA-VQ</td><td class="best">0.004821</td><td class="best">3.247°</td><td>363.36</td><td>508/525</td><td>8.57%</td></tr>
+        <tr><td>42</td><td>FSQ</td><td>0.011424</td><td>5.068°</td><td>260.47</td><td>490/525</td><td>13.41%</td></tr>
+        <tr><td>42</td><td>iFSQ</td><td>0.011342</td><td>5.083°</td><td>266.86</td><td>505/525</td><td>13.49%</td></tr>
+        <tr><td>43</td><td>EMA-VQ</td><td class="best">0.005093</td><td class="best">3.308°</td><td>376.40</td><td>515/525</td><td>7.61%</td></tr>
+        <tr><td>43</td><td>FSQ</td><td>0.011885</td><td>5.125°</td><td>257.92</td><td>500/525</td><td>14.14%</td></tr>
+        <tr><td>43</td><td>iFSQ</td><td>0.011882</td><td>5.129°</td><td>257.75</td><td>503/525</td><td>13.84%</td></tr>
+        <tr><td>44</td><td>EMA-VQ</td><td class="best">0.004925</td><td class="best">3.268°</td><td>381.74</td><td>508/525</td><td>7.00%</td></tr>
+        <tr><td>44</td><td>FSQ</td><td>0.011256</td><td>5.081°</td><td>259.95</td><td>508/525</td><td>15.66%</td></tr>
+        <tr><td>44</td><td>iFSQ</td><td>0.011655</td><td>5.188°</td><td>263.06</td><td>504/525</td><td>14.06%</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>② iFSQ 的一行改动：三组 levels 成对对照</h2>
+    <p class="muted small">以下均为 seed 42、20,000 step。每一对 FSQ/iFSQ 采用相同 levels、K、初始化路径与数据；K513/525/539 彼此容量不同，因此主要在各自成对组内比较。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Levels / K</th><th>FSQ Smooth L1 ↓</th><th>iFSQ Smooth L1 ↓</th><th>FSQ 关节 MAE ↓</th><th>iFSQ 关节 MAE ↓</th><th>FSQ / iFSQ Perplexity ↑</th></tr></thead>
+      <tbody>
+        <tr><td>3,3,3,19 / 513</td><td>0.012643</td><td>0.012535</td><td class="best">5.319°</td><td>5.367°</td><td>255.16 / 269.20</td></tr>
+        <tr><td>3,5,5,7 / 525</td><td>0.011424</td><td>0.011342</td><td class="best">5.068°</td><td>5.083°</td><td>260.47 / 266.86</td></tr>
+        <tr><td>7,7,11 / 539</td><td>0.011219</td><td>0.010974</td><td class="best">5.056°</td><td>5.084°</td><td>263.50 / 271.68</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">seed 42 的 pooled Smooth L1 与 perplexity 三对均略有改善，但关节 MAE 三对均略差；K525 的重复种子又显示重建收益并不稳定。</p>
+  </section>
+
+  <section>
+    <h2>③ 全 50 任务物理：EMA、FSQ、iFSQ 同场比较</h2>
+    <div class="warn"><strong>高 K 扫描结果（2026-10-26）：</strong>已测 EMA K256 至 K16384 的 pooled 有效码全部为 K/K；K32768 为 32629/32768（99.576%），缺 139 个码。因此只确定已测档位中首次非满利用落在 K16384 与 K32768 之间，不是穷举出的最小 K。FSQ/iFSQ 的 K513（levels 3,3,3,19）另有 503/513（98.05%）的非满利用样例。官方 iFSQ 的 PSNR/SSIM/LPIPS/FID 面向 RGB 图像；PhiZero 的未来视频 flow-matching loss 与 Physics-IQ 分数依赖视频解码器，均不能直接用于此处的视觉特征差分重建。</div>
+    <h3>扩容最终结果：共同 step 20,000、相同完整留出集</h3>
+    <p class="small muted">以下各组均已完成独立评估，47,797 个完整留出 clips、256 tokens/clip。未来特征 RMSE 衡量逐步差分累积后的漂移；它仍是特征空间指标，不是视频质量或机器人成功率。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>方法</th><th>K</th><th>差分 RMSE ↓</th><th>未来特征 RMSE ↓</th><th>有效码 / K</th><th>Perplexity</th><th>Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td>EMA-VQ</td><td>256</td><td>0.082253</td><td>0.148810</td><td>256/256</td><td>245.16</td><td>7.16%</td></tr>
+        <tr><td>EMA-VQ</td><td>512</td><td>0.081241</td><td>0.146777</td><td>512/512</td><td>488.48</td><td>4.09%</td></tr>
+        <tr><td>EMA-VQ</td><td>1024</td><td>0.080381</td><td>0.144942</td><td>1024/1024</td><td>973.21</td><td>2.19%</td></tr>
+        <tr><td>EMA-VQ</td><td>2048</td><td>0.079519</td><td>0.143288</td><td>2048/2048</td><td>1933.75</td><td>1.26%</td></tr>
+        <tr><td>EMA-VQ</td><td>4096</td><td>0.078682</td><td>0.141841</td><td>4096/4096</td><td>3830.60</td><td>0.72%</td></tr>
+        <tr><td>EMA-VQ</td><td>8192</td><td>0.077955</td><td>0.140458</td><td>8192/8192</td><td>7557.19</td><td>0.42%</td></tr>
+        <tr><td>EMA-VQ</td><td>16384</td><td>0.077277</td><td>0.139447</td><td>16384/16384</td><td>14621.08</td><td>0.25%</td></tr>
+        <tr><td>EMA-VQ <span class="tag">已测最低 RMSE</span></td><td>32768</td><td class="best">0.076681</td><td class="best">0.138612</td><td>32629/32768</td><td>27095.47</td><td>0.17%</td></tr>
+        <tr><td>FSQ 2,2,4,4,4</td><td>256</td><td>0.083900</td><td>0.150375</td><td>256/256</td><td>214.60</td><td>10.73%</td></tr>
+        <tr><td>FSQ 4,4,4,8</td><td>512</td><td>0.083726</td><td>0.147966</td><td>512/512</td><td>362.24</td><td>8.09%</td></tr>
+        <tr><td>FSQ 4,4,4,4,4</td><td>1024</td><td>0.082878</td><td>0.146952</td><td>1024/1024</td><td>735.07</td><td>5.93%</td></tr>
+        <tr><td>FSQ 4,4,4,4,4,2</td><td>2048</td><td>0.082129</td><td>0.145141</td><td>2048/2048</td><td>1418.88</td><td>3.70%</td></tr>
+        <tr><td>FSQ / iFSQ 3,3,3,19</td><td>513</td><td>0.084143 / 0.084146</td><td>0.149732 / 0.149764</td><td>503/513 各</td><td>362.35 / 361.58</td><td>7.46% / 7.52%</td></tr>
+        <tr><td>FSQ / iFSQ 3,7,7,7</td><td>1029</td><td>0.083500 / 0.083529</td><td>0.148282 / 0.148626</td><td>1029/1029 各</td><td>658.81 / 665.22</td><td>4.88% / 4.81%</td></tr>
+        <tr><td>FSQ / iFSQ 3,3,3,3,5,5</td><td>2025</td><td>0.082157 / 0.082155</td><td>0.145249 / 0.145035</td><td>2025/2025 各</td><td>1525.78 / 1514.31</td><td>3.62% / 3.50%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">EMA K256→512→1024→2048→4096→8192→16384→32768 的每一步 RMSE 下降均在 50/50 个任务成立；K256 seed42/43/44 的 EMA 也都优于同 K 的 FSQ。iFSQ 与同 levels FSQ 的差距仍很小。不同 K 的 perplexity 原值不能直接排名；应结合 normalized entropy、bits/token、任务/位置统计。K32768 的平均逐位置有效码仅约 18249.5/32768，并非每个位置都接近满用。</p>
+    <p class="muted small">同一对齐缓存、421,990 训练 + 47,797 留出完整 clips、256 tokens/clip、batch 32、seed 42、20,000 step、action auxiliary weight 0。RMSE 是原视觉特征差分单位；standardized Smooth L1 是归一化后的训练重建项。全任务物理与动作的 loss 量纲不同，不能横向比数值。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>物理方法 / levels</th><th>K</th><th>总体 RMSE ↓</th><th>任务宏 RMSE ↓</th><th>重建 Smooth L1 ↓</th><th>有效码</th><th>Perplexity ↑</th><th>Entropy ↑</th><th>Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td class="label">EMA-VQ <span class="tag">本轮领先</span></td><td>256</td><td class="best">0.082253</td><td class="best">0.083273</td><td class="best">0.327602</td><td>256/256</td><td class="best">245.16</td><td class="best">5.5019</td><td class="best">7.16%</td></tr>
+        <tr><td class="label">FSQ 4,8,8</td><td>256</td><td>0.085139</td><td>0.086141</td><td>0.345447</td><td>256/256</td><td>183.95</td><td>5.2147</td><td>10.64%</td></tr>
+        <tr><td class="label">FSQ 4,4,4,4 <span class="tag">首轮最佳 FSQ</span></td><td>256</td><td>0.084305</td><td>0.085282</td><td>0.339994</td><td>256/256</td><td>208.05</td><td>5.3378</td><td>13.51%</td></tr>
+        <tr><td class="label">FSQ 3,5,17</td><td>255</td><td>0.085211</td><td>0.086232</td><td>0.346151</td><td>255/255</td><td>183.03</td><td>5.2097</td><td>11.88%</td></tr>
+        <tr><td class="label">iFSQ 3,5,17</td><td>255</td><td>0.085220</td><td>0.086239</td><td>0.346180</td><td>255/255</td><td>183.29</td><td>5.2111</td><td>11.76%</td></tr>
+        <tr><td class="label">FSQ 5,7,7</td><td>245</td><td>0.085141</td><td>0.086140</td><td>0.345384</td><td>245/245</td><td>182.51</td><td>5.2068</td><td>10.50%</td></tr>
+        <tr><td class="label">iFSQ 5,7,7</td><td>245</td><td>0.085141</td><td>0.086140</td><td>0.345384</td><td>245/245</td><td>182.33</td><td>5.2058</td><td>10.51%</td></tr>
+        <tr><td class="label">FSQ 5,5,11</td><td>275</td><td>0.085052</td><td>0.086063</td><td>0.345052</td><td>275/275</td><td>196.29</td><td>5.2796</td><td>9.92%</td></tr>
+        <tr><td class="label">iFSQ 5,5,11</td><td>275</td><td>0.085063</td><td>0.086072</td><td>0.345093</td><td>275/275</td><td>196.73</td><td>5.2818</td><td>9.88%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">EMA 与前两组 FSQ 的 K256 完全相同；其余 K255/245/275 是近容量或同 levels 成对对照。所有方法在 pooled 留出集均访问到其全部码，故有效码/K 在这里没有区分力。EMA 的逐任务 RMSE 在 50/50 任务均低于每任务最好的非 EMA 候选；但三对 FSQ/iFSQ 的差距非常小，不宜过度解读。本表不是 rollout 成功率。</p>
+  </section>
+
+  <section id="analysis">
+    <h2>结果背后的原因：证据、解释与未证实部分</h2>
+    <h3>FSQ 对称 vs 官方默认非对称：同 levels/K 的最终复核</h3>
+    <p class="small muted">两组均为 K2048、levels 8,4,4,4,4、256 物理 token/clip、同一 47,797-clips 留出集、20,000 step；唯一预设量化差异是格点 bound。L4 的旧对称格点为 [−1, −1/3, 1/3, 1]，官方默认非对称格点为 [−1, −1/2, 0, 1/2]。这里的“对称”与 spatial-aligned query 路由无关。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>量化公式</th><th>差分 RMSE ↓</th><th>未来特征 RMSE ↓</th><th>有效码</th><th>Perplexity</th><th>Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td>旧对称 FSQ</td><td class="best">0.082399</td><td>0.145100</td><td>2048/2048</td><td>1321.55</td><td class="best">3.48%</td></tr>
+        <tr><td>官方默认非对称 FSQ</td><td>0.082405</td><td class="best">0.145099</td><td>2048/2048</td><td>1324.48</td><td>3.52%</td></tr>
+        <tr><td>EMA-VQ K2048（参照）</td><td class="best">0.079519</td><td class="best">0.143288</td><td>2048/2048</td><td>1933.75</td><td class="best">1.26%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">官方版 RMSE 只比旧对称版高约 0.006%，逐任务胜负 25/50，不能说哪种格点公式明显更好；同 K 的 EMA 仍有更低的 RMSE。另一个旧 FSQ K2048 使用 levels 4,4,4,4,4,2，levels 不同，不能把它当作公式的单变量对照。两种 FSQ 的 learned projections 可能适应格点偏移，但这只是解释假设。</p>
+    <div class="split">
+      <div>
+        <h3>为什么本轮 EMA-VQ 往往比 FSQ 好？</h3>
+        <p><strong>数据直接支持：</strong>相同 K256 的物理实验中，EMA 的差分 RMSE 0.082253，FSQ 4,4,4,4 为 0.084305；EMA 的有效码为 256/256、perplexity 245.16，FSQ 同样 256/256 但 perplexity 208.05。动作 K525 的三个 seed，EMA 的 Smooth L1 和关节 MAE 也均低于 FSQ/iFSQ。</p>
+        <p><strong>可能机制：</strong>EMA-VQ 的每个 ID 对应可随数据统计更新的连续中心，能适应这里的视觉差分和机器人动作分布；FSQ/iFSQ 的离散格点由 levels 固定，虽然前后投影可学习，但可用几何结构受限。这是合理解释，不是已经隔离变量证明的因果结论：投影、levels、优化动态和初始化也可能贡献差距。</p>
+      </div>
+      <div>
+        <h3>为什么 iFSQ 没明显赢 FSQ？</h3>
+        <p><strong>数据直接支持：</strong>物理 K513/1029/2025 三组同 levels 比较中，FSQ 与 iFSQ 的 RMSE 差异极小；动作 K525 的 iFSQ 小幅收益也不跨 seed 稳定。仅看更高的 perplexity，不能推导出更小的重建误差。</p>
+        <p><strong>可能机制：</strong>iFSQ 主要改变连续值映射到有限格点时的激活/边界方式；当主要瓶颈是固定格点表达能力或重建目标时，改善量可能小于数据和训练随机性的影响。旧实现的 FSQ 与官方默认 FSQ 公式不完全相同；但上方同 levels/K 复核显示公式替换对这一档的 RMSE 影响极小，未消除与 EMA 的差距。</p>
+      </div>
+    </div>
+    <div class="split">
+      <div>
+        <h3>为什么 K 加大仍能降误差，但不能无限加？</h3>
+        <p><strong>数据直接支持：</strong>256-token EMA 从 K256 到 K32768，已测相邻档位 RMSE 都下降，但 K16384→32768 只下降 0.77%，且固定编码成本从 14 增至 15 bit/token。K32768 的 pooled 有效码为 32629/32768。</p>
+        <p><strong>解释：</strong>更多中心让量化误差有下降空间；边际收益递减意味着更大 K 的额外收益越来越小。缺 139 个码仅说明本次留出集未观测到它们，不能单凭 99.576% 利用率判定“模型崩溃”或最优 K。更大词表也可能增加下游预测难度，当前没有对应 VLM 证据。</p>
+      </div>
+      <div>
+        <h3>为什么空间对齐 query 胜过全局 query？</h3>
+        <p><strong>数据直接支持：</strong>同为 256 token，EMA K1024 的空间对齐/全局 query RMSE 为 0.080381/0.089124；K2048 为 0.079519/0.088842。两组都使用相同长度、K、划分和训练预算。</p>
+        <p><strong>可能机制：</strong>每个 query 固定负责局部空间位置，减少不同位置争抢同一全局注意力的歧义，并使解码器可按位置读取；但只测了这一版架构和超参数，不能推导所有可学习全局 query 方案都更差。空间对齐 tokenizer 的离线 RMSE 更低，也不自动证明 VLM 更容易预测这些 ID。</p>
+      </div>
+    </div>
+    <div class="warn"><strong>共同限制：</strong>这里的“重建”是冻结视觉特征的相邻帧差分，不是原图或视频像素；future-feature RMSE 是差分累计后的特征偏差。perplexity=exp(entropy)，两者来自同一 ID 分布，不是独立证据；不同 K 的原值不能直接排名。真正选型还需固定 tokenizer 后，同条件比较 VLM 的 token 预测、动作误差和机器人 rollout。</div>
+  </section>
+
+  <section>
+    <h2>④ 物理 tokenizer：8 任务历史先导实验 <span class="tag pending">非全任务结果</span></h2>
+    <p class="muted small">7,709 个完整留出 clips、256 tokens/clip、K256、8,000 step；目标为 17 帧的 16 组相邻采样帧视觉特征差分，而非像素图像重建。此先导实验使用 action auxiliary weight 0.25；全 50 任务实验为 aux=0，不能直接跨实验比较总 loss。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>8 任务方法</th><th>总体 quantized RMSE ↓</th><th>逐任务宏平均 RMSE ↓</th><th>有效码 ↑</th><th>总体 Perplexity ↑</th><th>总体 Top10 ↓</th></tr></thead>
+      <tbody>
+        <tr><td class="label">EMA-VQ K256</td><td class="best">0.078861</td><td class="best">0.083219</td><td>256/256</td><td class="best">245.12</td><td class="best">7.32%</td></tr>
+        <tr><td class="label">FSQ 4,8,8</td><td>0.081762</td><td>0.086307</td><td>256/256</td><td>193.86</td><td>11.00%</td></tr>
+        <tr><td class="label">FSQ 4,4,4,4</td><td>0.080879</td><td>0.085378</td><td>256/256</td><td>210.45</td><td>13.35%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">EMA 的 RMSE 在 8/8 个任务都低于 FSQ 4,8,8；iFSQ 只有 2-step 冒烟测试，尚无可比较的先导收敛结果。</p>
+  </section>
+
+  <section>
+    <h2>⑤ 码利用率如何读</h2>
+    <div class="split">
+      <div>
+        <h3>全局 pooled 与逐任务会得出不同印象</h3>
+        <div class="table-wrap"><table style="min-width:520px">
+          <thead><tr><th>K525 动作，seed 42</th><th>总体 Perplexity ↑</th><th>逐任务宏平均 ↑</th><th>逐任务 Top10 ↓</th></tr></thead>
+          <tbody><tr><td>EMA-VQ</td><td>363.36</td><td>28.67</td><td>64.37%</td></tr><tr><td>FSQ</td><td>260.47</td><td>33.91</td><td>59.42%</td></tr><tr><td>iFSQ</td><td>266.86</td><td>34.02</td><td>59.70%</td></tr></tbody>
+        </table></div>
+      </div>
+      <div>
+        <h3>指标含义</h3>
+        <ul>
+          <li><strong>有效码：</strong>完整留出集至少出现一次的 ID 数；不代表这些码都常用。</li>
+          <li><strong>Entropy / Perplexity：</strong><code>perplexity = exp(entropy)</code>，两者不是独立证据；相同 K 下越高通常越均衡。</li>
+          <li><strong>Top10：</strong>最常用 10 个 ID 的频率之和；越低通常表示集中度更小。</li>
+          <li><strong>任务内分布：</strong>EMA 的总体码分布更均衡，不等于每个任务内部都更均衡。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>下一步与可核对的来源</h2>
+    <ul>
+      <li><strong>当前 AR 训练方案：</strong>动作 32 token/32 步 chunk（EMA-VQ K525），物理 64 token/17 帧 clip（空间对齐 EMA-VQ K2048），共 96 个输出位置；8-token 动作作为历史及匹配基线保留。128-token/clip EMA K1024/K2048、动作 EMA K525 的 8/16/32-token，以及官方默认/旧对称 FSQ K2048 均已完成相应 20,000-step 评估；8/16 与 8/32 的 batch 预算不同，不能跨表直接排名。物理 K 扫描表只代表固定 256-token 实验，不要把其最优值直接套在所选 64-token 方案上。</li>
+      <li>全 50 任务物理缓存已合并并与动作缓存逐 key 对齐；高 K 八组均完成 20,000 step 和完整留出集评估。后续还需按码率、VLM 预测难度和推理成本筛选，并对高 K 优选配置做重复种子复核。</li>
+      <li>当前 32+64 自回归 LoRA 后训练已启动，ACP 四卡主任务已保存 step 1000；这不改变本页 tokenizer 指标的离线性质，仍没有下游策略成功率 / rollout 结论。<a href="ROBOTWIN_AR_GENERATION_TRAINING.html">后训练 pipeline 与单卡吞吐结果</a>。</li>
+      <li><a href="ROBOTWIN_ACTION_TOKEN_LENGTH_8_VS_32.md">动作 8 vs 32 匹配实验与当前 ACP 状态记录</a> · <a href="../artifacts/robotwin_full50_study/action_tokenizers/ema_8x525_decay095_dead100_bs128_steps20000/heldout_step20000.json">8-token batch128 原始评估</a> · <a href="../artifacts/robotwin_full50_study/action_tokenizers/ema_32x525_decay095_dead100_bs128_steps20000/heldout_step20000.json">32-token batch128 原始评估</a></li>
+      <li><a href="ROBOTWIN_EMA_FSQ_IFSQ_TOKENIZER_STUDY.md">完整实验记录（含配置、限制和 checkpoint hash）</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/action_tokenizers/ema_8x525_decay095_dead100_steps20000/heldout_step20000.json">动作 EMA K525 原始评估 JSON</a> · <a href="../artifacts/robotwin_full50_study/action_tokenizers/fsq_8x525_levels3557_steps20000/heldout_step20000.json">FSQ</a> · <a href="../artifacts/robotwin_full50_study/action_tokenizers/ifsq_8x525_levels3557_steps20000/heldout_step20000.json">iFSQ</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/action_tokenizers/ema_16x525_decay095_dead100_steps20000/heldout_step20000.json">动作 16-token EMA K525 最终评估</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/fsq_official_levels84444_k2048_steps20000/heldout_step20000.json">官方非对称 FSQ K2048</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/fsq_symmetric_levels84444_k2048_steps20000/heldout_step20000.json">旧对称 FSQ K2048</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k256_steps20000/heldout_step20000_schema3.json">全 50 任务物理 EMA K256 原始评估 JSON</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k2048_steps20000/heldout_step20000.json">EMA K2048</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/fsq_levels4444_steps20000/heldout_step20000.json">FSQ K256</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ifsq_levels3517_steps20000/heldout_step20000.json">iFSQ K255</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k16384_steps20000/heldout_step20000.json">EMA K16384 原始评估 JSON</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k32768_steps20000/heldout_step20000.json">EMA K32768 原始评估 JSON</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/fsq_levels444442_k2048_steps20000/heldout_step20000.json">FSQ K2048</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_t64_k1024_steps20000/heldout_step20000.json">64-token EMA K1024 最终评估</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_t64_k2048_steps20000/heldout_step20000.json">64-token EMA K2048</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k1024_steps20000/heldout_step20000.json">256-token EMA K1024</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_k2048_steps20000/heldout_step20000.json">256-token EMA K2048</a></li>
+      <li><a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_t128_k1024_steps20000/heldout_step20000.json">128-token EMA K1024 最终评估</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_t128_k2048_steps20000/heldout_step20000.json">128-token EMA K2048</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_global_k1024_steps20000/heldout_step20000.json">全局 query K1024</a> · <a href="../artifacts/robotwin_full50_study/physics_tokenizers/ema_global_k2048_steps20000/heldout_step20000.json">全局 query K2048</a></li>
+      <li><a href="../artifacts/physical_language_tokenizers/quantizer_study_ema_256x256_steps8000/heldout_evaluation.json">8 任务物理 EMA 原始评估 JSON</a> · <a href="../artifacts/physical_language_tokenizers/quantizer_study_fsq_256x256_steps8000/heldout_evaluation.json">FSQ 4,8,8</a> · <a href="../artifacts/physical_language_tokenizers/quantizer_study_fsq_256x256_levels4444_steps8000/heldout_evaluation.json">FSQ 4,4,4,4</a></li>
+    </ul>
+  </section>
+  <footer>本页是固定时间点快照；后续训练不会自动刷新页面。比较时请留意任务数、token 序列长度、K、辅助损失权重、随机种子和 pooled / 宏平均统计口径。</footer>
+</main>
+</body>
+</html>

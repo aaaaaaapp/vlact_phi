@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -141,6 +142,10 @@ def evaluate(args: argparse.Namespace) -> dict:
     gripper_correct = torch.zeros((), device=device)
     gripper_count = torch.zeros((), device=device)
     task_sums = torch.zeros(len(dataset.task_names), 6, device=device)
+    reconstruction_sum = torch.zeros((), device=device)
+    reconstruction_squared_sum = torch.zeros((), device=device)
+    reconstruction_count = torch.zeros((), device=device)
+    task_reconstruction_sums = torch.zeros(len(dataset.task_names), 3, device=device)
 
     for actions, valid, task_ids in loader:
         actions = actions.to(device)
@@ -149,6 +154,12 @@ def evaluate(args: argparse.Namespace) -> dict:
         output = model(actions, gripper_dims=gripper_dims.tolist())
         prediction = output["reconstruction"]
         ids = output["token_ids"]
+        reconstruction_mask = valid.unsqueeze(-1).expand_as(prediction)
+        reconstruction_difference = prediction - actions
+        reconstruction_smooth_l1 = F.smooth_l1_loss(prediction, actions, reduction="none")
+        reconstruction_sum += reconstruction_smooth_l1.masked_select(reconstruction_mask).sum()
+        reconstruction_squared_sum += reconstruction_difference.square().masked_select(reconstruction_mask).sum()
+        reconstruction_count += reconstruction_mask.sum()
         code_counts += torch.bincount(ids.flatten(), minlength=model.codebook_size)
         for task_id in task_ids.unique().tolist():
             task_counts[task_id] += torch.bincount(ids[task_ids == task_id].flatten(), minlength=model.codebook_size)
@@ -175,6 +186,10 @@ def evaluate(args: argparse.Namespace) -> dict:
         gripper_count += gripper_mask.sum()
         for task_id in task_ids.unique().tolist():
             selected = task_ids == task_id
+            selected_reconstruction = reconstruction_mask[selected]
+            task_reconstruction_sums[task_id, 0] += reconstruction_smooth_l1[selected].masked_select(selected_reconstruction).sum()
+            task_reconstruction_sums[task_id, 1] += reconstruction_difference[selected].square().masked_select(selected_reconstruction).sum()
+            task_reconstruction_sums[task_id, 2] += selected_reconstruction.sum()
             selected_joint = joint_mask[selected]
             selected_velocity = velocity_mask[selected]
             selected_gripper = gripper_mask[selected]
@@ -186,13 +201,33 @@ def evaluate(args: argparse.Namespace) -> dict:
             task_sums[task_id, 5] += selected_gripper.sum()
 
     joint_mae_rad = joint_error_sum / joint_count.clamp_min(1)
+    task_metrics = {
+        name: {
+            "reconstruction_smooth_l1": float((task_reconstruction_sums[task_id, 0] / task_reconstruction_sums[task_id, 2].clamp_min(1)).cpu()),
+            "reconstruction_rmse": float(torch.sqrt(task_reconstruction_sums[task_id, 1] / task_reconstruction_sums[task_id, 2].clamp_min(1)).cpu()),
+            "joint_wrapped_mae_deg": float(torch.rad2deg(task_sums[task_id, 0] / task_sums[task_id, 1].clamp_min(1)).cpu()),
+            "joint_velocity_mae_rad": float((task_sums[task_id, 2] / task_sums[task_id, 3].clamp_min(1)).cpu()),
+            "gripper_accuracy": float((task_sums[task_id, 4] / task_sums[task_id, 5].clamp_min(1)).cpu()),
+        }
+        for task_id, name in enumerate(dataset.task_names)
+    }
     return {
         "checkpoint": str(args.checkpoint.resolve()),
         "input": str(input_path.resolve()),
         "validation_episodes": len(
             set(dataset.episodes[validation_indices].astype(int).tolist())
         ),
+        "validation_task_episodes": len(
+            set(
+                zip(
+                    dataset.task_ids[validation_indices].astype(int).tolist(),
+                    dataset.episodes[validation_indices].astype(int).tolist(),
+                )
+            )
+        ),
         "validation_chunks": len(validation_indices),
+        "reconstruction_smooth_l1": float((reconstruction_sum / reconstruction_count.clamp_min(1)).cpu()),
+        "reconstruction_rmse": float(torch.sqrt(reconstruction_squared_sum / reconstruction_count.clamp_min(1)).cpu()),
         "joint_wrapped_mae_rad": float(joint_mae_rad.cpu()),
         "joint_wrapped_mae_deg": float(torch.rad2deg(joint_mae_rad).cpu()),
         "joint_velocity_mae_rad": float((velocity_error_sum / velocity_count.clamp_min(1)).cpu()),
@@ -203,13 +238,10 @@ def evaluate(args: argparse.Namespace) -> dict:
             name: summarize_code_counts(task_counts[task_id])
             for task_id, name in enumerate(dataset.task_names)
         },
-        "task_metrics": {
-            name: {
-                "joint_wrapped_mae_deg": float(torch.rad2deg(task_sums[task_id, 0] / task_sums[task_id, 1].clamp_min(1)).cpu()),
-                "joint_velocity_mae_rad": float((task_sums[task_id, 2] / task_sums[task_id, 3].clamp_min(1)).cpu()),
-                "gripper_accuracy": float((task_sums[task_id, 4] / task_sums[task_id, 5].clamp_min(1)).cpu()),
-            }
-            for task_id, name in enumerate(dataset.task_names)
+        "task_metrics": task_metrics,
+        "macro_metrics": {
+            key: float(np.mean([entry[key] for entry in task_metrics.values()]))
+            for key in ("reconstruction_smooth_l1", "reconstruction_rmse", "joint_wrapped_mae_deg", "joint_velocity_mae_rad", "gripper_accuracy")
         },
         "position_code_usage": [summarize_code_counts(counts) for counts in position_counts],
     }

@@ -16,11 +16,11 @@ def make_model(quantizer="ema_vq"):
         num_heads=4,
         quantizer=quantizer,
         codebook_size=16,
-        fsq_levels=(4, 4),
+        fsq_levels=(3, 5) if quantizer == "ifsq" else (4, 4),
     )
 
 
-@pytest.mark.parametrize("quantizer", ["ema_vq", "fsq"])
+@pytest.mark.parametrize("quantizer", ["ema_vq", "fsq", "fsq_official", "ifsq"])
 def test_spatiotemporal_tokenizer_shapes_and_decode(quantizer):
     model = make_model(quantizer)
     features = torch.randn(2, 5, 4, 12)
@@ -40,6 +40,19 @@ def test_default_contract_emits_256_tokens():
     assert model.num_transitions == 16
     assert model.queries_per_transition == 16
     assert model.num_tokens == 256
+
+
+def test_ifsq_physical_reconstruction_trains_encoder_and_projection():
+    model = make_model("ifsq")
+    features = torch.randn(2, 5, 4, 12)
+    valid = torch.ones(2, 5, dtype=torch.bool)
+    output = model(features, valid)
+    output["loss"].backward()
+    assert torch.isfinite(output["loss"])
+    assert model.to_latent.weight.grad is not None
+    assert torch.isfinite(model.to_latent.weight.grad).all()
+    assert model.quantizer.project_in.weight.grad is not None
+    assert torch.isfinite(model.quantizer.project_in.weight.grad).all()
 
 
 def test_action_auxiliary_loss_reaches_quantized_spatial_tokens():
@@ -115,7 +128,7 @@ def test_spatiotemporal_tokenizer_validates_shapes():
 
 
 def test_spatial_aligned_routing_rejects_non_nested_query_grid():
-    with pytest.raises(ValueError, match="square spatial/query grids"):
+    with pytest.raises(ValueError, match="nested square or 2x4 query grid"):
         SpatiotemporalPhysicalLanguageTokenizer(
             feature_dim=12,
             num_frames=3,
@@ -128,7 +141,7 @@ def test_spatial_aligned_routing_rejects_non_nested_query_grid():
         )
 
 
-@pytest.mark.parametrize("queries_per_transition", [1, 4, 16])
+@pytest.mark.parametrize("queries_per_transition", [1, 4, 8, 16])
 def test_spatial_aligned_routing_supports_nested_query_grids(queries_per_transition):
     model = SpatiotemporalPhysicalLanguageTokenizer(
         feature_dim=12,
@@ -146,6 +159,34 @@ def test_spatial_aligned_routing_supports_nested_query_grids(queries_per_transit
     assert decoder_mask.shape == (16, queries_per_transition)
     assert torch.equal(decoder_mask, encoder_mask.transpose(0, 1))
     assert torch.isfinite(encoder_mask).sum(dim=0).eq(1).all()
+
+
+def test_128_token_spatial_routing_groups_vertical_pairs_and_roundtrips():
+    model = SpatiotemporalPhysicalLanguageTokenizer(
+        feature_dim=12,
+        num_frames=17,
+        spatial_tokens=16,
+        queries_per_transition=8,
+        hidden_dim=24,
+        latent_dim=8,
+        num_heads=4,
+        codebook_size=16,
+        token_routing="spatial_aligned",
+    )
+    expected_query_for_cell = torch.tensor(
+        [0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7]
+    )
+    assert torch.equal(
+        torch.isfinite(model.spatial_alignment_mask).long().argmax(dim=0),
+        expected_query_for_cell,
+    )
+    features = torch.randn(2, 17, 16, 12)
+    output = model(features)
+    assert model.num_tokens == 128
+    assert output["token_ids"].shape == (2, 128)
+    assert model.decode_tokens(output["token_ids"]).shape == (2, 16, 16, 12)
+    output["loss"].backward()
+    assert torch.isfinite(model.to_latent.weight.grad).all()
 
 
 def test_spatial_aligned_routing_preserves_slot_locality():

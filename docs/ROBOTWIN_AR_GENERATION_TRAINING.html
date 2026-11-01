@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoboTwin｜VLM 自回归生成训练核对页</title>
+  <style>
+    :root{color-scheme:light;--ink:#183047;--muted:#536b80;--line:#dce6ee;--bg:#f3f7fa;--card:#fff;--blue:#186891;--teal:#087e74;--amber:#ac6512;--red:#aa423c}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif}
+    main{max-width:1120px;margin:auto;padding:26px 20px 60px}header{padding:30px 34px;border-radius:20px;color:white;background:linear-gradient(120deg,#133653,#166d82);box-shadow:0 12px 30px #1734531c}
+    h1{margin:0 0 7px;font-size:clamp(26px,3.5vw,38px);line-height:1.25}h2{margin:0 0 11px;font-size:22px}h3{font-size:17px;margin:0 0 8px}p{margin:8px 0}header p{color:#ddedf4}
+    .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}.chip{border:1px solid #ffffff65;border-radius:99px;padding:3px 10px;font-size:12px}
+    section,.tile{border:1px solid var(--line);background:var(--card);border-radius:15px;box-shadow:0 4px 14px #16345109}section{padding:22px 25px;margin-top:17px}
+    .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:18px 0}.tile{padding:17px 18px}.tile b{display:block;font-size:26px;line-height:1.2}.tile span{font-size:13px;color:var(--muted)}
+    .note{padding:12px 16px;margin:12px 0;border-radius:9px;background:#e9f5f2;border-left:5px solid var(--teal)}.note.warn{background:#fff5e6;border-left-color:#e3a032}.note.bad{background:#fff0ed;border-left-color:#cd746a}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}.box{border:1px solid #d6e4ec;background:#f6fafc;border-radius:11px;padding:14px 16px}
+    .sequence{overflow-x:auto;display:flex;gap:6px;align-items:stretch;margin:14px 0 8px}.token{min-width:112px;padding:12px;border-radius:10px;text-align:center;border:1px solid #cbdce8;background:#edf5fa}.token.prompt{min-width:195px;background:#e8f1f7}.token.action{background:#eaf4f1;border-color:#b7dcd4}.token.physics{background:#fff2e1;border-color:#efd1a4}.token b{display:block}.token small{color:var(--muted)}
+    .arrow{align-self:center;color:var(--teal);font-weight:800;font-size:21px}
+    .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;min-width:680px;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{padding:9px 11px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}th:first-child,td:first-child{text-align:left}thead{background:#ecf4f8;color:#3d5b73}tbody tr:nth-child(even){background:#fafcfd}tbody tr:last-child td{border-bottom:0}
+    .badtext{color:var(--red);font-weight:700}.pending{color:var(--amber);font-weight:700}.good{color:var(--teal);font-weight:700}.muted,small{color:var(--muted)}code{padding:1px 5px;border-radius:4px;background:#edf3f7;overflow-wrap:anywhere}pre{margin:10px 0;padding:14px;border-radius:9px;background:#edf3f7;overflow-x:auto}pre code{padding:0;background:none}
+    a{color:var(--blue);text-underline-offset:3px}ul{padding-left:21px;margin:8px 0}li{margin:5px 0}footer{padding:18px 3px 0;color:var(--muted);font-size:12px}
+    nav{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0 0}nav a{background:#ffffff22;border:1px solid #ffffff65;border-radius:8px;color:white;padding:3px 9px;font-size:12px;text-decoration:none}
+    .steps{counter-reset:detail-step;display:grid;gap:9px;margin:12px 0}.step{position:relative;padding:12px 15px 12px 51px;border:1px solid #d6e4ec;border-radius:10px;background:#f7fafc}.step::before{counter-increment:detail-step;content:counter(detail-step);position:absolute;left:13px;top:13px;display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:#dcefeb;color:#076a60;font-weight:750}.step b{display:block}.step p{margin:3px 0 0}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
+    @media(max-width:800px){.tiles,.split{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:550px){main{padding:12px 9px 35px}header{padding:22px 18px}section{padding:18px 15px}.tiles,.split{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>VLM 自回归生成训练核对页</h1>
+    <p>当前后训练：从 RoboTwin 当前图像与指令，自回归生成 32 个动作 token、再生成 64 个物理 token；历史 8+64 实验单独标注。</p>
+    <div class="chips"><span class="chip">RoboTwin 50 任务</span><span class="chip">Qwen3-VL-4B</span><span class="chip">固定 96 个输出位置</span><span class="chip">静态快照 · 2026-10-28 19:29 北京时间</span></div>
+    <nav aria-label="页面目录"><a href="#current-lora">当前长训方案</a><a href="#lm-head-choice">为什么选独立头</a><a href="#speed-benchmark">单卡速度与显存</a><a href="#strict-tying">严格绑权结构</a><a href="#train-pipeline">训练流水线</a><a href="#infer-pipeline">推理流水线</a><a href="#sequence">序列示意</a><a href="#training">参数与权重</a><a href="#eval-pipeline">评估口径</a><a href="#results">历史结果</a><a href="#sources">源码</a></nav>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><b>32 → 64</b><span>先动作、后物理；真正逐 token 因果生成</span></div>
+    <div class="tile"><b>3 张表</b><span>文字、动作、物理；动作和物理各自输入/输出绑权</span></div>
+    <div class="tile"><b>128</b><span>正式全局 batch；1 卡或 4 卡一致</span></div>
+    <div class="tile"><b>1k 已存</b><span>四卡 32+64 ACP 主任务首个 checkpoint</span></div>
+  </div>
+
+  <section id="current-lora">
+    <h2>当前长训：冻结视觉 + 严格绑权 LoRA rank/alpha 32</h2>
+    <div class="note"><strong>权重已在本机，无需下载。</strong>正式起点为 <code>/mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/checkpoints/steps_100000_pytorch_model.pt</code>。只载入其中名称与形状严格匹配的 714 个 Qwen 参数；原 632 个 PI 动作头参数不适用于这套 32+64 离散自回归架构。旧预训练基座烟测保留为独立对照，不混用 checkpoint。</div>
+    <div class="steps">
+      <div class="step"><b>可训练范围</b><p><strong>视觉编码器冻结</strong>；文字 embedding/文字 lm_head、语言基座也冻结。全部 36 层语言模块的注意力 q/k/v/o 和 MLP gate/up/down 接 LoRA（<strong>rank 32、alpha 32</strong>，dropout 0.05，缩放系数 alpha/rank=1）。动作表 <code>[525,2560]</code>、物理表 <code>[2048,2560]</code> 各自输入/输出绑权并直接训练，不对码表加 LoRA。预计约 72.65M 可训练参数，须由真实运行核实。文字能力不能仅凭冻结文字表就保证不退化。</p></div>
+      <div class="step"><b>训练与评估</b><p>固定 episode [5,20,25,39,49] 留出；每批输入当前图像和任务文字，以 teacher forcing 预测 <strong>32 动作码 + 64 物理码</strong>，两流 CE 均值相加。ACP 四卡主任务 <code>pt-z9vz3h39</code> 为 4×8×4=全局 batch 128，开启梯度检查点；单卡主任务 <code>pt-my24ff1g</code> 为 1×16×8=128，关闭梯度检查点。两者最多 20k 优化步、每 1k 保存。四卡任务已保存 step 1000；还没有可据以判断最终质量的完整 20k 留出或 rollout 结果。</p></div>
+    </div>
+    <div class="note warn"><strong>当前状态快照：</strong>2026-10-28 19:29 四卡任务约 1436/20000 步，单卡约 340/20000 步；数值不会自动刷新。原 8+64 rank/alpha 32 ACP 作业 <code>pt-0b3hrb0l</code> 已按要求停止并删除，不能再当作在训任务。32+64 的 20 步吞吐短测不是模型效果对比；物理流是否学会预测须看后续留出评估和 rollout。</div>
+  </section>
+
+  <section id="lm-head-choice">
+    <h2>为什么选择独立 lm_head：当前设计与共享头的讨论点</h2>
+    <div class="note"><strong>设计决定，不是胜出结论。</strong>我选择动作、物理各自的预测头，并进一步采用“严格模态分离”：各自的<strong>输入码表和输出头使用同一组权重</strong>；文字保留原 Qwen 输入表 / <code>lm_head</code>。目前 32+64 的输出顺序由任务定义固定，不需要模型在文字、动作、物理三种词表间自行决定下一 token 的模态。</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>当前输出位置</th><th>输入向量来源</th><th>预测矩阵与 logits</th><th>本次训练更新？</th></tr></thead>
+      <tbody>
+        <tr><td>文字 / prompt</td><td>Qwen 原输入表</td><td>原 <code>lm_head [155765,2560]</code>；本次不计算文字生成 CE</td><td>文字表与文字头冻结</td></tr>
+        <tr><td>32 个动作 ID</td><td><code>E_action [525,2560]</code></td><td><code>h [2560] × E_actionᵀ → 525</code> 个分数</td><td>动作表直接训练</td></tr>
+        <tr><td>64 个物理 ID</td><td><code>E_physics [2048,2560]</code></td><td><code>h [2560] × E_physicsᵀ → 2048</code> 个分数</td><td>物理表直接训练</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted"><strong>“独立”的准确含义：</strong>三种模态共用视觉编码与语言骨干；分开的是码输入路由、动作/物理输出分类与各自 CE。Qwen 原大表为兼容 token ID 仍物理存在动作/物理对应行，但严格模式在码位置不用那些行。代码中当前动作/物理头不是额外的 <code>nn.Linear</code> 参数，而是直接用各自 <code>Embedding.weight</code> 做输出投影；各模态内部绑权，模态之间不绑权。32/64 是输出位置数，525/2048 是每个位置的类别数，二者不要混淆。</p>
+    <h3>和共享头到底差在哪里？</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>方案</th><th>码位置输入</th><th>码位置输出 / CE 候选</th><th>本页定位</th></tr></thead>
+      <tbody>
+        <tr><td>共享头</td><td>Qwen 大输入表</td><td>同一个 Qwen <code>lm_head</code>，约 15.6 万候选</td><td>早期 8+64 历史基线；可不按模态分头</td></tr>
+        <tr><td>仅输出头独立</td><td>仍用 Qwen 大输入表</td><td>动作 525、物理 2048；两张独立 <code>Linear</code></td><td>用于分离“输出分类”这一因素的历史消融</td></tr>
+        <tr><td class="good">严格分模态独立（当前）</td><td>码 ID 改走本模态 <code>E_action/E_physics</code></td><td>525/2048；输出与本模态输入表绑权</td><td>当前 32+64 LoRA 训练使用</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small muted">共享头在没有固定长度/候选约束时更自然地允许跨模态选下一个符号；若也对共享头强制“动作段只能出动作、物理段只能出物理”，这项灵活性在当前任务中就未被使用。三种方案的归一化候选空间、输入路由及训练参数范围可能不同，不能只凭原始 CE 比高低。</p>
+    <h3>我选择独立头的理由，以及它可能付出的代价</h3>
+    <div class="split">
+      <div class="box"><h3>理由</h3><p>① 动作位置只需在 525 个动作码里选，物理位置只需在 2048 个物理码里选，与“先动作后物理”的固定任务结构一致；② 新码任务不直接改写 Qwen 的文字输入/输出权重，有利于把文字参数与码参数分开管理；③ 两张表可用不同学习率、分别诊断 CE/准确率，避免把完整大词表上的 CE 与模态内预测混作一谈；④ 预测码回填时也走本模态输入表，使“同一码的输入向量”和“被预测时的输出向量”保持同一参数。</p></div>
+      <div class="box"><h3>代价与不确定性</h3><p>① 额外增加约 659 万个可训练码表参数；② 预先规定模态和长度，不能让模型在统一词表中自由选择输出文字还是哪类码；③ 模态内 CE 不与共享头的完整词表 CE 同口径，不能直接比数值；④ 冻结文字头也<strong>不保证</strong>文字能力不退化，因为语言层 LoRA 仍会改变共享隐状态。是否真正更好，必须在相同训练预算下比较留出与 rollout。</p></div>
+    </div>
+    <div class="note warn"><strong>已有的有限对照：</strong>历史 8+64、500 步、两任务 32 样本面板中，共享头动作/物理 top-1 为 <code>25/256、0/2048</code>，严格独立绑权为 <code>19/256、1/2048</code>。严格版并未在动作 top-1 上胜出；样本与训练预算太小，且现在已切换为 32+64 LoRA，不能拿这组数字断言当前独立头优于或劣于共享头。</div>
+    <h3>准备和师兄讨论的具体问题</h3>
+    <ul>
+      <li>任务固定要求“32 动作 → 64 物理”，未来又可能需要输出文字：是否仍应使用独立头按阶段路由，还是需要一个共享头让模型自主决定模态？</li>
+      <li>对保护原有文字生成能力，冻结文字表 + 独立码表是否足够？是否还应加入文本保留数据或训前/训后文字能力评测？</li>
+      <li>共享头与严格独立头的公平比较，应否固定同一 RoboTwin-All 基座、tokenizer/ID 缓存、32+64 长度、seed、全局 batch 128、训练步数与 LoRA 范围，并同时报告码准确率、自由生成、文字能力及闭环 rollout？</li>
+      <li>如果共享头更好，是完整大词表竞争带来的跨模态迁移，还是初始化、参数量或优化设置造成？能否加入“仅独立输出头、输入仍共享”的中间消融来区分？</li>
+    </ul>
+    <p class="small muted">代码对应 <code>QwenDualAutoregressiveReasoner.action_logits()</code> / <code>physics_logits()</code>、<code>_routed_input_embeddings()</code> 和 <code>forward()</code>；配置为 <code>separate_heads=true</code>、<code>strict_modality_tying=true</code>。历史共享头用 <code>separate_heads=false</code>，历史“仅输出头独立”用 <code>separate_heads=true</code>、<code>strict_modality_tying=false</code>，三者 checkpoint 结构不同，不能互当续训权重。</p>
+  </section>
+
+  <section id="speed-benchmark">
+    <h2>ACP 单卡：相同全局 batch 128 的速度 / 显存实测</h2>
+    <p>“秒/步”是<strong>一次优化器更新</strong>的耗时；单卡时每步处理 128 个训练样本。微批×梯度累积始终等于 128。显存是 <code>nvidia-smi</code> 观察值；20 步短测的峰值按 1 秒采样，不代表瞬时绝对峰值。</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>微批 × 累积</th><th>梯度检查点</th><th>秒 / 优化步</th><th>显存 MiB / 81920</th><th>实测状态</th></tr></thead>
+      <tbody>
+        <tr><td>8 × 16</td><td>开</td><td>约 14.0</td><td>14,815</td><td>旧单卡任务，已停止</td></tr>
+        <tr><td class="good">16 × 8</td><td>关</td><td class="good">约 10.4</td><td>71,299</td><td>当前单卡长跑 <code>pt-my24ff1g</code></td></tr>
+        <tr><td>32 × 4</td><td>关</td><td>—</td><td>OOM</td><td>第 0 步失败</td></tr>
+        <tr><td>32 × 4</td><td>开</td><td>约 12.3</td><td>20,117</td><td>20/20 步成功</td></tr>
+        <tr><td>64 × 2</td><td>开</td><td>约 11.9</td><td>26,493</td><td>20/20 步成功</td></tr>
+        <tr><td>128 × 1</td><td>开</td><td>约 11.9</td><td>43,303</td><td>20/20 步成功；无梯度累积</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note"><strong>怎么选：</strong>在已测方案中 16×8、关检查点吞吐最快，故保留为单卡长跑；128×1 虽可运行，但相对 64×2 没有可见速度收益且多占约 16,810 MiB 显存。20 步短测不足以比较最终模型质量；四卡任务不参与这个单卡速度排名。详见 <a href="ROBOTWIN_ACTION_TOKEN_LENGTH_8_VS_32.md">动作长度及单卡调优记录</a>。</div>
+  </section>
+
+  <section id="strict-tying">
+    <h2>严格分模态输入表与输出头绑权：架构与旧 500 步对照</h2>
+    <div class="note"><strong>这是当前 32+64 长训使用的模态结构。</strong>本节的 500 步数字则是此前 8+64、非 LoRA 的历史对照；当前语言骨干改为 36 层 LoRA。动作和物理输入/输出分别绑权，训练 CE 在各自的 K525/K2048 候选内计算，不经过完整文字词表。</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>模态</th><th>输入查表</th><th>输出预测</th><th>旧 500 步实验更新？</th></tr></thead>
+      <tbody>
+        <tr><td>文字</td><td>Qwen 原 embedding <code>[155765,2560]</code></td><td>Qwen 原绑权 <code>lm_head</code></td><td>文字表冻结；最后两层和 norm 仍更新</td></tr>
+        <tr><td>动作</td><td><code>E_action[525,2560]</code></td><td><code>h × E_actionᵀ</code></td><td>同一张表接收输入侧与输出侧梯度</td></tr>
+        <tr><td>物理</td><td><code>E_physics[2048,2560]</code></td><td><code>h × E_physicsᵀ</code></td><td>同一张表接收输入侧与输出侧梯度</td></tr>
+      </tbody>
+    </table></div>
+    <div class="steps">
+      <div class="step"><b>训练输入与图像位置</b><p>当前图像、任务文字、真值 32 动作 + 64 物理码先经 Qwen tokenizer 得到 ID。用原始 ID 计算包含图像位置的 M-RoPE；文字/图像占位符用冻结的 Qwen 输入表，动作和物理位置分别改从 <code>E_action/E_physics</code> 查向量。图像特征仍由冻结视觉塔注入，绝不把未来真实帧送进 VLM。</p></div>
+      <div class="step"><b>训练预测与反向</b><p>带因果遮罩的 backbone 输出各位置 2560 维隐状态；只取目标前一位置。动作 32 处使用 <code>h×E_actionᵀ</code> 在 525 个码上算 CE；物理 64 处使用 <code>h×E_physicsᵀ</code> 在 2048 个码上算 CE；两流均值 CE 相加。旧 8+64 的 500 步实验更新两张表、语言末 2 层和 norm；当前 LoRA 长训则更新两张表与 36 层 LoRA。两者均不更新文字输入表/绑权文字头。</p></div>
+      <div class="step"><b>真实推理</b><p>先用图像 + 文字 prompt 预填充 KV cache；前 32 步动作表预测并回填动作 ID，后 64 步物理表预测并回填物理 ID。每个 ID 再经其自己的输入表嵌入；增量 M-RoPE 使用预填充的 <code>rope_deltas</code> 和当前位置。整个过程没有共享头的全词表分类。</p></div>
+    </div>
+    <h3>同为 500 步的 32 样本小面板</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>架构</th><th>动作 top-1</th><th>物理 top-1</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>共享头</td><td>25/256</td><td>0/2048</td><td>原基线</td></tr>
+        <tr><td>仅独立输出头</td><td>21/256</td><td>1/2048</td><td>输入仍来自 Qwen 表</td></tr>
+        <tr><td>严格分模态绑权（当前默认）</td><td>19/256</td><td>1/2048</td><td>文字表冻结；码输入/输出各自同表</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn">三组均为同初始化、500 步、两个任务 32 样本的诊断，不是全 50 任务或机器人 rollout。严格绑权<strong>没有在这组准确率上胜出</strong>；采用它是用户指定的参数隔离设计选择，不是已验证的性能结论。三方案 CE 分母不同，不能直接比较；文字表虽冻结，末两层仍会变化，所以文本能力仍需训前/训后实测。Qwen 原大词表为兼容旧 ID 仍保留冗余码行；若将来使用原文字 <code>generate()</code>，应屏蔽这些码 ID。</div>
+  </section>
+
+  <section id="scope">
+    <h2>历史共享头方案：当时训练什么？</h2>
+    <div class="note"><strong>仅本节与下一节“仅独立输出头”是早期 8+64 共享头/非严格方案。</strong>下方训练、推理流水线已更新为当前 32+64 严格分模态 LoRA。早期共享头只训练最后 2 层、norm 与共享输入/输出表；当前范围见页面开头。连续动作扩散头没有参与。</div>
+    <div class="split">
+      <div class="box"><h3>模型输入（推理也能获得）</h3><p>当前时刻的图像和语言任务指令。提示词要求先预测 8 个机器人动作 token，再预测 64 个未来物理 token。</p></div>
+      <div class="box"><h3>监督目标（只在训练/评估时使用）</h3><p>已冻结的动作 tokenizer 给出 8 个真值 ID（K525）；已冻结的物理 tokenizer 给出 64 个真值 ID（K2048）。未来视觉变化只参与生成物理标签，<strong>不作为 VLM 输入</strong>。</p></div>
+    </div>
+    <p><small>动作目标对应 32 步 chunk；物理目标对应 17 帧 clip 的视觉特征变化。两者按同一个 task / episode / base index 对齐；时间窗口不同，不应误解为“物理 token 是动作重建误差”。</small></p>
+  </section>
+
+  <section id="separate-heads">
+    <h2>历史对照：仅独立输出头，输入仍共用 Qwen 表</h2>
+    <div class="note"><strong>本节不是当前严格绑权方案。</strong>这是此前的仅输出头对照；可设置 <code>DUAL_AR_STRICT_MODALITY_TYING=0</code> 显式重跑。共享头对照则设置 <code>DUAL_AR_SEPARATE_HEADS=0</code>。旧 checkpoint 不被覆盖。</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>输出模态</th><th>预测矩阵形状</th><th>训练目标与推理选择</th></tr></thead>
+      <tbody>
+        <tr><td>文本</td><td>Qwen 原 <code>lm_head: [V, 2560]</code></td><td>保留原头；这次 72-token 后训练不给文本位置计 loss</td></tr>
+        <tr><td>动作</td><td>新 <code>action_head: [525, 2560]</code></td><td>前 8 个输出位置只在 525 个动作码内算 CE / argmax</td></tr>
+        <tr><td>物理</td><td>新 <code>physics_head: [2048, 2560]</code></td><td>后 64 个输出位置只在 2048 个物理码内算 CE / argmax</td></tr>
+      </tbody>
+    </table></div>
+    <p>三者仍共用 Qwen3-VL 的视觉编码器、语言骨干和因果上下文。动作/物理码在<strong>输入侧</strong>依然是 Qwen 词表中的独立 ID：预测出的动作码回填后，下一步的物理头可条件化于它。动作和物理新头从原 Qwen 头对应行复制初始化，随后分别更新，不与输入 embedding 绑权。训练时只做一次 teacher-forced backbone 前向，从 <code>hidden[:, :-1]</code> 取目标前一位置的 2560 维隐状态交给对应头；推理时按“8 动作 → 64 物理”切换头并用 KV cache 逐步回填。两版 CE 的归一化候选数不同，不能直接比 CE 数字；应比较同一留出集的准确率与最终任务效果。</p>
+    <div class="note warn"><strong>32 样本小面板：</strong>同为 500 步、统一物理初始化时，共享头动作/物理 top-1 为 <code>25/256、0/2048</code>；独立头为 <code>21/256、1/2048</code>。差异极小且样本少，暂不能判定哪种头更好。独立头 checkpoint 已可严格复原，并成功跑完 72-token 自回归推理；完整记录见 <code>docs/ROBOTWIN_DUAL_AR_POSTTRAIN.md</code>。</div>
+  </section>
+
+  <section id="train-pipeline">
+    <h2>训练阶段 pipeline：一个 batch 实际经历什么？</h2>
+    <p>下面按代码执行顺序展开。这里的“自回归训练”指 next-token 因果目标：训练时提供真实前缀以并行算 loss；<strong>不是</strong>训练时也调用 <code>generate()</code> 循环 72 次。</p>
+    <div class="steps">
+      <div class="step"><b>读取 RoboTwin 当前观测与身份键</b><p>数据集在指定 task、episode、base index 取样，提供当前观测图像列表、任务语言，以及其他数据字段。当前框架的 <code>forward()</code> 实际读取 <code>image</code>、<code>lang</code>、<code>action_token_ids</code>、<code>physics_token_ids</code>；虽然底层数据集也可包含状态和连续动作，此处没有把它们送入 VLM。</p></div>
+      <div class="step"><b>按键附上两流真值 ID，并过滤缺失位置</b><p>用 <code>(task_id, episode_id, base_index)</code> 在离线缓存中查找 <strong>32 个动作 ID 与 64 个物理 ID</strong>；32 动作 ID 来自新 EMA-VQ K525 checkpoint，已与物理缓存逐键合并。<code>drop_missing=True</code> 使只具有完整双流目标的位置进入抽样；训练排除固定的 5 个验证 episode。物理 ID 来源于未来特征，但未来帧只用于离线制标签，不会作为 VLM 图像输入。</p></div>
+      <div class="step"><b>构造用户 prompt 与 assistant 真值答案</b><p>用户消息由当前观测图像与文本 <code>Task: {instruction}\nPredict 32 robot action tokens, then 64 future physics tokens.</code> 组成。assistant 答案是 <code>&lt;robot_action_A1&gt;…&lt;robot_action_A32&gt;&lt;robot_physics_P1&gt;…&lt;robot_physics_P64&gt;</code>。Qwen processor 的 chat template 把图像、消息边界和文本一起编码为模型输入。</p></div>
+      <div class="step"><b>定位 96 个目标，并遮掉其余标签</b><p>代码检查每个样本恰好有 32 个动作符号、随后 64 个物理符号；形状或顺序无效会报错。<code>labels</code> 里只有这 96 个 token ID 保留，prompt、图像相关位置、padding、assistant 结束符全设为 <code>-100</code>。它们仍可作上下文，但不进入 CE 目标。</p></div>
+      <div class="step"><b>做一次带因果遮罩的 teacher-forced 前向</b><p>Qwen3-VL 接收整条“prompt + 正确答案”序列。位置 <code>t</code> 只能关注图像/指令和此前的正确 token，不能看后面的目标。当前严格版本先输出每位置的 2560 维隐状态，再由动作/物理各自的绑权表产生 logits；训练使用 bf16，不对完整文字词表做分类。</p></div>
+      <div class="step"><b>移位对齐 next-token，并分流计算 CE</b><p>用目标前一位置的隐状态预测下一标签：动作 32 处与物理 64 处分别计算各自词表 CE；两流先各自跨位置求平均，再相加 <code>L = L_action + L_physics</code>。返回训练器的 <code>action_loss</code> 实际是这个双流总和；日志里的 <code>action_dit_loss</code> 也不代表扩散头参与训练。</p></div>
+      <div class="step"><b>反向、优化与保存</b><p>训练器用总 loss 反向传播，梯度裁剪阈值 1.0；AdamW 更新动作/物理绑权表和 36 层注意力/MLP LoRA，冻结视觉塔、文字表和基础语言权重。四卡 ZeRO-2 为 4×8×4=128、检查点开；单卡主线为 1×16×8=128、检查点关。每 1k 步保存可训练权重；单独 checkpoint 不包含完整基座，评估时先恢复基座再加载它。</p></div>
+    </div>
+    <h3>因果移位：三个关键边界</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>用于预测的位置</th><th>允许看到的前缀</th><th>下一标签</th><th>进入哪个 loss</th></tr></thead>
+      <tbody>
+        <tr><td>答案开始前</td><td>当前图像 + 指令</td><td>A₁</td><td>动作 CE</td></tr>
+        <tr><td>A₃₂ 之后</td><td>图像 + 指令 + 正确 A₁…A₃₂</td><td>P₁</td><td>物理 CE</td></tr>
+        <tr><td>P₆₃ 之后</td><td>图像 + 指令 + 正确 A₁…A₃₂ + P₁…P₆₃</td><td>P₆₄</td><td>物理 CE</td></tr>
+        <tr><td>P₆₄ 之后</td><td>完整正确序列</td><td>结束符</td><td>不计 loss</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><strong>易混点：</strong>teacher forcing 的物理 token 能看到<strong>真值动作前缀</strong>；真实推理时只能看到模型自己生成的动作前缀，所以 teacher-forced CE/准确率可能比自由生成更乐观。当前严格版本的 CE 就是在动作 K525 / 物理 K2048 内计算；“完整 VLM 词表 CE”只适用于本页的历史共享头实验。</div>
+  </section>
+
+  <section id="infer-pipeline">
+    <h2>推理阶段 pipeline：96 步如何逐个生成？</h2>
+    <div class="steps">
+      <div class="step"><b>只准备当前图像和任务语言</b><p>用与训练相同的提示模板和 Qwen chat template 构造 prompt，<strong>不附上 assistant 真值答案</strong>，也不查动作/物理 ID 缓存。代码记录此时的 <code>prompt_width</code>，用来从最终序列里切出生成部分。</p></div>
+      <div class="step"><b>模型先预测动作 A₁…A₃₂</b><p>严格版本前 32 步只调用动作头 <code>h×E_actionᵀ</code>，从 K525 个 ID 中贪心选最高分；每一步将预测 ID 经动作输入表回填，并用 KV cache 继续解码。这里不是对完整 Qwen 词表调用 <code>generate()</code>。</p></div>
+      <div class="step"><b>接着预测物理 P₁…P₆₄</b><p>已生成 32 个动作后，切换到物理头 <code>h×E_physicsᵀ</code>，从 K2048 个 ID 中选择。P₁ 条件化于模型自己生成的 32 个动作；P₂ 又依赖 P₁，以此类推到 P₆₄。生成期间没有未来真实帧或真实物理码。</p></div>
+      <div class="step"><b>固定长度并还原整数 ID</b><p>严格版本的解码循环固定为 <code>32+64=96</code> 步；每步头只产出当前模态的局部码 ID，再映射到相应全局 token ID 供下一步输入。推理不让模型任意提前终止或跨模态乱选。</p></div>
+      <div class="step"><b>当前接口返回什么、尚未做什么</b><p><code>predict_token_ids()</code> 返回形状为 <code>[batch,32]</code> 的 <code>action_token_ids</code> 和 <code>[batch,64]</code> 的 <code>physics_token_ids</code>。它没有在函数内将动作 ID 解码成关节轨迹、将物理 ID 还原成图像/视频，也没有闭环驱动 RoboTwin rollout。</p></div>
+    </div>
+    <div class="note"><strong>一句话区分：</strong>训练时物理 P₂ 的上下文是真值 <code>A₁…A₃₂,P₁</code>；推理时是模型自己生成的 <code>Â₁…Â₃₂,P̂₁</code>。因此必须单独测 free-running，不能只看 teacher-forced loss。</div>
+  </section>
+
+  <section id="sequence">
+    <h2>自回归序列到底长什么样？</h2>
+    <div class="sequence" aria-label="由当前图像和指令开始，依次生成 32 个动作和 64 个物理 token">
+      <div class="token prompt"><b>当前图像 + 指令</b><small>prompt，不计 loss</small></div><span class="arrow">→</span>
+      <div class="token action"><b>A₁</b><small>动作 K525</small></div><span class="arrow">→</span>
+      <div class="token action"><b>A₂ … A₃₂</b><small>共 32 个</small></div><span class="arrow">→</span>
+      <div class="token physics"><b>P₁</b><small>物理 K2048</small></div><span class="arrow">→</span>
+      <div class="token physics"><b>P₂ … P₆₄</b><small>共 64 个</small></div>
+    </div>
+    <p>第 <code>t</code> 个位置只看 prompt 与此前 token，预测下一个 token：<code>p(A₁…A₃₂,P₁…P₆₄ | 当前图像, 指令)</code>。动作词表是 <code>&lt;robot_action_0…524&gt;</code>；物理词表是新增的 <code>&lt;robot_physics_0…2047&gt;</code>，二者不混用。</p>
+    <div class="split">
+      <div class="box"><h3>训练：teacher forcing</h3><p>把正确的前序 token 放进序列，使用因果注意力并行计算每个位置的 next-token CE。它是<strong>自回归目标</strong>，但训练不需要 96 次串行前向。只对 96 个目标 token 计损失；提示词、padding、结束符均屏蔽。</p></div>
+      <div class="box"><h3>推理：free running</h3><p>从 prompt 开始一次只生成一个 token；前 32 步用 K525 动作头，后 64 步用 K2048 物理头；贪心解码共固定生成 96 个。预测依赖自己已生成的前序 token，而不读取真值缓存。</p></div>
+    </div>
+    <pre><code>L = mean CE_K525(A₁…A₃₂) + mean CE_K2048(P₁…P₆₄)
+每一流先内部取平均，再以 1:1 加和；不是把 96 个位置一锅平均。</code></pre>
+    <p><small>当前严格版本训练 CE 在各自模态的 K525/K2048 个候选上计算，因而 <code>ln(525)</code>、<code>ln(2048)</code> 可作为各流均匀随机参考；历史共享头实验则在完整 VLM 词表上算 CE，口径不同。</small></p>
+  </section>
+
+  <section id="training">
+    <h2>后训练配置与运行阶段</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>项目</th><th>当前设置</th><th>为什么重要</th></tr></thead>
+      <tbody>
+        <tr><td>数据</td><td>50 任务，32 动作 + 64 物理 ID</td><td>双流合并缓存 469,787 个完整目标；留出 episode 5、20、25、39、49</td></tr>
+        <tr><td>基座初始化</td><td>RoboTwin-All 100k-step Qwen 微调权重</td><td>714 个 Qwen 张量严格匹配；物理 K2048 行统一初始化</td></tr>
+        <tr><td>可训练范围</td><td>动作/物理绑权表 + 36 层 LoRA</td><td>rank/alpha 32；视觉塔、文字表及基础语言权重冻结</td></tr>
+        <tr><td>优化</td><td>AdamW，bf16，ZeRO-2</td><td>四卡 4×8×4=128；单卡主线 1×16×8=128</td></tr>
+        <tr><td>学习率</td><td>基础 1e-5；LoRA 与动作表 1e-4；物理表 2e-4</td><td>cosine 至 1e-6；warmup 500；最多 20k 步</td></tr>
+        <tr><td>保存</td><td>每 1k 步保存可训练权重</td><td>四卡 step 1000 已保存；单卡尚待首个保存点核验</td></tr>
+      </tbody>
+    </table></div>
+    <p><small>使用 <code>/mnt/jfzn/liujn/miniconda3/envs/vlact</code>；当前训练作业仅管理自己的 GPU/进程，不清理或停止其他任务。</small></p>
+    <h3 style="margin-top:18px">权重从哪里来，为什么 checkpoint 不是单独可用的？</h3>
+    <div class="steps">
+      <div class="step"><b>构造基础 Qwen3-VL 和两套离散词表</b><p>先从本地 <code>Qwen3-VL-4B-Instruct-Action</code> 加载图文模型；动作 K525 符号沿用既有 ID，物理 K2048 符号建立独立绑权表。词表 ID 顺序必须固定，不能在评估时重排。</p></div>
+      <div class="step"><b>严格 warm-start RoboTwin-All 100k 权重</b><p>只载入名称与形状匹配的 714 个 Qwen 参数；旧 PI 动作头不适用于这套离散自回归架构。旧权重矩阵多出的 267 个预留行不是物理知识，不拿它们作为当前物理码的预训练语义。</p></div>
+      <div class="step"><b>统一初始化物理码表</b><p>当前 2048 个物理向量按同一统计规则初始化，而非让前 267 个继承旧预留行、其余新建；随后物理表在训练中可更新。统一初始化只解决起点一致性，不保证最终 CE 或策略指标更优。</p></div>
+      <div class="step"><b>保存/恢复可训练权重</b><p>当前保存的是 LoRA 与两张可训练码表等训练权重，不是一份独立可推理的完整 Qwen 模型；评估须重建相同基座与词表再加载训练权重。下方 8+64 历史 500-step checkpoint 的“24 张量、约 1.2 GB”不适用于当前 LoRA checkpoint。</p></div>
+    </div>
+  </section>
+
+  <section id="eval-pipeline">
+    <h2>评估 pipeline：数字是怎么来的？</h2>
+    <div class="steps">
+      <div class="step"><b>锁定留出集合与样本</b><p>评估只取训练排除的 episode <code>[5,20,25,39,49]</code>，按给定 task 选择样本；要求这些样本也有完整双流目标。当前 20 步吞吐短测只对 <code>adjust_bottle</code> 与 <code>click_alarmclock</code> 各 1 个样本作结束诊断，不能当作全 50 任务总体指标。</p></div>
+      <div class="step"><b>Teacher-forced：分模态 CE 与 top-1</b><p>把留出样本的正确 96-token 答案放进输入。严格版本分别在动作 K525、物理 K2048 候选内算 CE 与 top-1；评估脚本报告的 <code>teacher_forced_ce</code> 是 <code>action_ce + physics_ce</code>（当前权重均为 1），<strong>不是</strong>将 96 个位置一起平均。历史共享头则在完整文字词表算分流 CE，不能与当前严格版直接比较数值。</p></div>
+      <div class="step"><b>Free-running：从 prompt 真正逐 token 生成</b><p>不输入任何目标 ID，调用严格版逐步解码得到 32+64 个 ID。逐流 accuracy = 匹配位置数 / 该流位置数；整段精确匹配 = 所有 32 个动作 ID 或所有 64 个物理 ID 均一致。20 步吞吐短测关闭了自由生成诊断；它们不是生成质量评估。</p></div>
+      <div class="step"><b>报告边界与下一步</b><p>目前的 JSON 没有动作 ID 解码后的关节 RMSE、物理 ID 解码后的未来特征 RMSE、视频重建 loss 或 RoboTwin 闭环成功率。判断新初始化是否更好，必须用相同模型、相同 step、相同留出样本和相同指标对照；单个训练 batch loss 不足以排名。</p></div>
+    </div>
+    <div class="note warn"><strong>不能把“0 准确率”理解成训练完全无效：</strong>历史首轮 panel 只有 4 个样本；当前 20 步短测每组仅 2 个 teacher-forced 样本。它们主要证明链路可运行，不足以排名模型质量；训练 loss 下降也不能单独证明已学会自由生成。</div>
+  </section>
+
+  <section id="results">
+    <h2>历史 8+64 自回归实验：保留供对照，不是当前 32+64 结果</h2>
+    <h3>训练 batch（不是验证集均值）</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>阶段 / step</th><th>动作 CE ↓</th><th>物理 CE ↓</th><th>合计 ↓</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>首轮 10 / 500</td><td>13.019</td><td>13.685</td><td>26.704</td><td>已完成</td></tr>
+        <tr><td>首轮 500 / 500</td><td>4.275</td><td>7.465</td><td>11.740</td><td class="good">checkpoint 已保存</td></tr>
+        <tr><td>当时续训 10 / 5,000</td><td>4.316</td><td>7.492</td><td>11.808</td><td>历史时间点记录，非当前状态</td></tr>
+      </tbody>
+    </table></div>
+    <h3 style="margin-top:18px">首轮 checkpoint 的留出诊断</h3>
+    <p>仅 <code>adjust_bottle</code> 与 <code>click_alarmclock</code> 各 2 个样本，共 4 个；另对其中 2 个样本做 free-running。<a href="/results/Checkpoints/qwen_dual_ar_8a64p_full50_seed42_steps500/heldout_diagnostic.json">点击看原始 JSON</a>。</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>评估</th><th>动作流</th><th>物理流</th><th>解释</th></tr></thead>
+      <tbody>
+        <tr><td>Teacher-forced CE ↓</td><td>5.750</td><td>7.662</td><td>已知正确前缀，预测下一 ID</td></tr>
+        <tr><td>Teacher-forced top-1 ↑</td><td class="badtext">0 / 32</td><td class="badtext">0 / 256</td><td>4 样本 × 8 / 64 位置</td></tr>
+        <tr><td>Free-running top-1 ↑</td><td class="badtext">0%</td><td class="badtext">0%</td><td>2 样本、完整自行生成 72 个 ID</td></tr>
+        <tr><td>整段精确匹配 ↑</td><td class="badtext">0 / 2</td><td class="badtext">0 / 2</td><td>分别比较整段 8 / 64 个 ID</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note bad"><strong>当时结论：</strong>历史共享头 500 步证明训练和保存/加载链路可运行，但很小的留出 panel 没显示有效生成。此处完整词表物理 CE 7.662 与 <code>ln(2048)≈7.625</code> 数值接近并不足以说明接近模态内随机基线，因为 CE 候选范围不同；不能据此认定物理流学好了，也不能把 4 样本结果当作全 50 任务或 rollout 结论。</div>
+    <h3 style="margin-top:18px">同口径初始化对照：2 个任务 × 每任务 16 样本</h3>
+    <p>两份各训练 500 步的 checkpoint 在相同的 32 个留出样本上比较；其中 4 个样本另做 free-running。只变动原 267 个预留 embedding 行的起点，其余训练设定相同。</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>指标</th><th>原初始化</th><th>267 行统一初始化</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>Teacher-forced 动作 CE ↓</td><td>5.638</td><td>5.772</td><td>原方案较低</td></tr>
+        <tr><td>Teacher-forced 物理 CE ↓</td><td>7.694</td><td>7.670</td><td>统一初始化低 0.024，但幅度很小</td></tr>
+        <tr><td>Teacher-forced 动作 top-1 ↑</td><td>27 / 256（10.55%）</td><td>25 / 256（9.77%）</td><td>32 样本 × 8 动作位置</td></tr>
+        <tr><td>Teacher-forced 物理 top-1 ↑</td><td>3 / 2048（0.15%）</td><td>0 / 2048（0%）</td><td>32 样本 × 64 物理位置</td></tr>
+        <tr><td>Free-running 逐位 / 整段准确</td><td>均为 0</td><td>均为 0</td><td>仅 4 个自生成样本</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><strong>对照解读：</strong>统一初始化解决了起点不一致，但当时 500 步的预测指标没有一致变好；物理 CE 略降、物理 top-1 反而更低，动作也略弱。两任务 32 样本不足以作最终排名，更不能把小幅 CE 差异解释成机器人策略收益。两份原始结果分别在各自 run 目录的 <code>heldout_panel32.json</code>。</div>
+    <p><strong>还缺：</strong>更大规模的跨任务留出评估、自由生成后的动作解码误差、物理变化重建误差，以及真实机器人/仿真 rollout。首轮原初始化 checkpoint 位于 <code>results/Checkpoints/qwen_dual_ar_8a64p_full50_seed42_steps500/final_model/pytorch_model.pt</code>。</p>
+  </section>
+
+  <section id="ongoing">
+    <h2>历史 8+64 续训记录：不要误读为当前任务</h2>
+    <div class="note warn">此前页面曾记录原初始化方案在某个时间点为 2,824/5,000 步；该数字不是今天的作业状态。当前主线是新的 32+64、LoRA rank/alpha 32、全局 batch 128，任务号和状态见页面顶部。历史 5k 任务最终结果如需引用，应以其独立 checkpoint / 日志重新核验。</div>
+    <p>若长训后物理 CE/准确率仍无提升，需要分别排查输入图像对未来特征的可预测性、动作/物理窗口对齐、标签分布与训练容量。当前不能宣称和 PhiZero 或全量 VLA 联训的优劣。</p>
+    <p><strong>统一初始化对照已完成：</strong>它只改变物理 ID 0–266 的起点，保持物理 ID 267–2047 及旧有效词表的起点不变。其 500 步和 32 样本结果已在上表展示；不能据此推断长训结果。</p>
+  </section>
+
+  <section id="sources">
+    <h2>对照代码与记录</h2>
+    <ul>
+      <li><code>starVLA/model/framework/QwenDualAutoregressiveReasoner.py</code>：72 个标签、分流 CE、受限自回归生成。</li>
+      <li><code>scripts/physical_tokens/qwen_strict_lora_r32_32action_64physics_full50_robotwin_finetune.yaml</code>：当前 32+64 网络、数据与优化配置；旧 8+64 配置仅供历史对照。</li>
+      <li><code>scripts/physical_tokens/run_acp_dual_ar_32action_1gpu_tuned_20k.sh</code>：当前单卡长跑与微批/梯度检查点覆盖；20 步短测另有 m32/m64/m128 启动器。</li>
+      <li><code>scripts/physical_tokens/evaluate_dual_autoregressive_reasoner.py</code>：teacher-forced 与 free-running 评估。</li>
+      <li><a href="/docs/ROBOTWIN_DUAL_AR_POSTTRAIN.md">后训练 Markdown 记录</a>；<a href="/results/Checkpoints/qwen_dual_ar_8a64p_full50_seed42_steps500/heldout_diagnostic.json">首轮原始诊断 JSON</a>。</li>
+    </ul>
+  </section>
+  <footer>专页范围：VLM 自回归生成后训练。此页不做 EMA-VQ / FSQ / iFSQ tokenizer 方法对比。</footer>
+</main>
+</body>
+</html>

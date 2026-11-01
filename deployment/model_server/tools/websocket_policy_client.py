@@ -50,7 +50,10 @@ class WebsocketClientPolicy:
                     additional_headers=headers,
                     open_timeout=150,
                     ping_interval=20,
-                    ping_timeout=20,
+                    # Local GPU inference can take longer than 20 seconds when
+                    # several evaluation workers share a busy node. A short
+                    # heartbeat timeout can abort an otherwise valid episode.
+                    ping_timeout=120,
                 )
                 metadata = msgpack_numpy.unpackb(conn.recv())
                 return conn, metadata
@@ -72,6 +75,5 @@ class WebsocketClientPolicy:
         if isinstance(response, str):
             raise RuntimeError(f"Error in inference server:\n{response}")
         return msgpack_numpy.unpackb(response)
-
 
 

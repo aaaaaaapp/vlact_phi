@@ -30,7 +30,12 @@ def parse_ints(value: str) -> tuple[int, ...]:
 
 
 class SpatiotemporalFeatureDataset(Dataset):
-    def __init__(self, path: Path, action_target_cache: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        action_target_cache: Path | None = None,
+        feature_array_cache: Path | None = None,
+    ) -> None:
         self.path = path.resolve()
         with np.load(self.path, allow_pickle=False) as data:
             required = {
@@ -43,7 +48,11 @@ class SpatiotemporalFeatureDataset(Dataset):
             missing = required.difference(data.files)
             if missing:
                 raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
-            self.frame_features = np.asarray(data["frame_features"])
+            self.frame_features = (
+                np.load(feature_array_cache.resolve(), mmap_mode="r", allow_pickle=False)
+                if feature_array_cache is not None
+                else np.asarray(data["frame_features"])
+            )
             self.source_indices = np.asarray(data["source_frame_indices"], dtype=np.int64)
             self.valid_mask = np.asarray(data["future_valid_mask"], dtype=np.bool_)
             self.episode_ids = np.asarray(data["episode_ids"], dtype=np.int64)
@@ -111,6 +120,7 @@ class SpatiotemporalFeatureDataset(Dataset):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--feature-array-cache", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--action-target-cache", type=Path, default=None)
     parser.add_argument("--action-aux-weight", type=float, default=0.0)
@@ -121,7 +131,7 @@ def parse_args() -> argparse.Namespace:
         choices=("absolute", "action_token_residual"),
         default="absolute",
     )
-    parser.add_argument("--quantizer", choices=("ema_vq", "fsq"), default="ema_vq")
+    parser.add_argument("--quantizer", choices=("ema_vq", "fsq", "fsq_official", "ifsq"), default="ema_vq")
     parser.add_argument("--codebook-size", type=int, default=128)
     parser.add_argument("--fsq-levels", default="4,4,8")
     parser.add_argument("--queries-per-transition", type=int, default=16)
@@ -140,6 +150,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--eval-interval", type=int, default=100)
+    parser.add_argument(
+        "--skip-initial-eval",
+        action="store_true",
+        help="Skip the expensive step-1 full validation pass; later intervals still evaluate.",
+    )
     parser.add_argument("--save-interval", type=int, default=500)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -302,6 +317,9 @@ def evaluate(model, loader: DataLoader, device: torch.device, world_size: int) -
             "quantized_mse",
             "continuous_mse",
             "no_motion_mse",
+            "future_feature_mse",
+            "final_feature_mse",
+            "frozen_future_feature_mse",
             "temporal_reverse_token_change",
             "action_aux_loss",
             "action_joint_loss",
@@ -332,6 +350,13 @@ def evaluate(model, loader: DataLoader, device: torch.device, world_size: int) -
             (continuous_reconstruction - target).square().mean() * sample_count
         )
         totals["no_motion_mse"] += target.square().mean() * sample_count
+        # Integrating transition errors tests whether small local errors drift
+        # into large future-feature errors. All evaluated clips are complete.
+        future_error = (output["reconstruction"] - target).cumsum(dim=1)
+        future_target = batch["features"][:, 1:] - batch["features"][:, :1]
+        totals["future_feature_mse"] += future_error.square().mean() * sample_count
+        totals["final_feature_mse"] += future_error[:, -1].square().mean() * sample_count
+        totals["frozen_future_feature_mse"] += future_target.square().mean() * sample_count
         totals["temporal_reverse_token_change"] += (
             (output["token_ids"] != shuffled_ids).float().mean() * sample_count
         )
@@ -347,6 +372,8 @@ def evaluate(model, loader: DataLoader, device: torch.device, world_size: int) -
     metrics["perplexity"] = float(entropy.exp().cpu())
     metrics["entropy_nats"] = float(entropy.cpu())
     metrics["normalized_entropy"] = float((entropy / math.log(raw_model.codebook_size)).cpu())
+    metrics["effective_bits_per_token"] = float((entropy / math.log(2)).cpu())
+    metrics["fixed_bits_per_token"] = math.log2(raw_model.codebook_size)
     metrics["top10_fraction"] = float(
         (token_counts.topk(min(10, raw_model.codebook_size)).values.sum()
          / token_counts.sum().clamp_min(1)).cpu()
@@ -357,6 +384,12 @@ def evaluate(model, loader: DataLoader, device: torch.device, world_size: int) -
     metrics["rmse"] = metrics.pop("quantized_mse") ** 0.5
     metrics["continuous_rmse"] = metrics.pop("continuous_mse") ** 0.5
     metrics["no_motion_rmse"] = metrics.pop("no_motion_mse") ** 0.5
+    metrics["future_feature_rmse"] = metrics.pop("future_feature_mse") ** 0.5
+    metrics["final_feature_rmse"] = metrics.pop("final_feature_mse") ** 0.5
+    metrics["frozen_future_feature_rmse"] = metrics.pop("frozen_future_feature_mse") ** 0.5
+    metrics["future_feature_relative_rmse_reduction"] = (
+        1.0 - metrics["future_feature_rmse"] / max(metrics["frozen_future_feature_rmse"], 1e-12)
+    )
     baseline = max(metrics["no_motion_rmse"], 1e-12)
     metrics["continuous_relative_rmse_reduction"] = (
         baseline - metrics["continuous_rmse"]
@@ -417,7 +450,9 @@ def main() -> None:
 
     if args.action_aux_weight > 0 and args.action_target_cache is None:
         raise ValueError("positive action_aux_weight requires --action-target-cache")
-    dataset = SpatiotemporalFeatureDataset(args.input, args.action_target_cache)
+    dataset = SpatiotemporalFeatureDataset(
+        args.input, args.action_target_cache, args.feature_array_cache
+    )
     validation_episodes = parse_ints(args.validation_episodes)
     all_train_indices, validation_indices = split_complete_indices(
         dataset,
@@ -523,7 +558,7 @@ def main() -> None:
         optimizer.step()
         scheduler.step()
         step += 1
-        if step == 1 or step % args.eval_interval == 0 or step == args.max_steps:
+        if (step == 1 and not args.skip_initial_eval) or step % args.eval_interval == 0 or step == args.max_steps:
             metrics = evaluate(model, validation_loader, device, world_size)
             metrics.update(step=step, elapsed_seconds=time.time() - started)
             if rank == 0:

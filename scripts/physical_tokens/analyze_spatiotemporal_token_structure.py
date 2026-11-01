@@ -251,6 +251,7 @@ def analyze_indices(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--feature-array-cache", type=Path)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--validation-episodes", default="5,20,25,39,49")
@@ -260,7 +261,9 @@ def main() -> None:
     parser.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
-    dataset = SpatiotemporalFeatureDataset(args.input)
+    dataset = SpatiotemporalFeatureDataset(
+        args.input, feature_array_cache=args.feature_array_cache
+    )
     _, validation_indices = split_complete_indices(
         dataset,
         parse_ints(args.validation_episodes),

@@ -48,6 +48,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--action-cache", type=Path, required=True)
     parser.add_argument("--physics-cache", type=Path, required=True)
+    parser.add_argument(
+        "--physics-feature-cache", type=Path,
+        help="Keep only rows whose full future clip is valid; keys must match physics IDs exactly.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
@@ -57,6 +61,16 @@ def main() -> None:
     physics_path = args.physics_cache.resolve()
     action = load(action_path, "action_token_ids")
     physics = load(physics_path, "physics_token_ids")
+    if args.physics_feature_cache is not None:
+        with np.load(args.physics_feature_cache.resolve(), allow_pickle=False) as archive:
+            for key in ("task_ids", "episode_ids", "base_indices"):
+                if not np.array_equal(archive[key], physics[key]):
+                    raise ValueError(f"physics feature cache is not aligned on {key}")
+            complete = np.asarray(archive["future_valid_mask"], dtype=bool).all(axis=1)
+        physics = {
+            key: values if key == "task_names" else values[complete]
+            for key, values in physics.items()
+        }
     if not np.array_equal(action["task_names"], physics["task_names"]):
         raise ValueError("action and physics caches have different task_names")
 
@@ -98,6 +112,7 @@ def main() -> None:
         "action_token_shape": list(arrays["action_token_ids"].shape),
         "physics_token_shape": list(arrays["physics_token_ids"].shape),
         "exact_qualified_key_join": True,
+        "complete_future_clips_only": args.physics_feature_cache is not None,
         "output_sha256": sha256_file(args.output),
     }
     manifest_path = args.output.with_suffix(args.output.suffix + ".manifest.json")

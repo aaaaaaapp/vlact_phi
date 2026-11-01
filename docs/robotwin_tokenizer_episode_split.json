@@ -1,5 +1,5 @@
 {
-  "description": "D28/D29 fixed episode split shared by action and physics tokenizers, repeated for each of the eight task IDs.",
+  "description": "Fixed episode-ID split shared by RoboTwin action and physics tokenizers; applied independently to every task (8-task pilot and 50-task full study).",
   "training_episode_ids": [
     0,
     1,

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoboTwin 双流自回归后训练｜方法与阶段结果</title>
+  <style>
+    :root { color-scheme:light; --ink:#182c43; --muted:#52677d; --line:#d8e3ec; --bg:#f3f7fa; --card:#fff; --navy:#173453; --blue:#146696; --teal:#087d73; --amber:#a26009; --red:#aa423b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif; }
+    main { max-width:1160px; margin:auto; padding:26px 20px 60px; }
+    header { border-radius:22px; padding:30px 34px; color:#fff; background:linear-gradient(125deg,#173453,#126c80); box-shadow:0 12px 30px #17345320; }
+    h1 { margin:0 0 7px; font-size:clamp(25px,3.4vw,38px); line-height:1.25; }
+    h2 { margin:0 0 12px; font-size:22px; }
+    h3 { margin:0 0 8px; font-size:17px; }
+    p { margin:8px 0; }
+    header p { color:#d9ebf2; }
+    .pills { display:flex; gap:9px; flex-wrap:wrap; margin-top:16px; }
+    .pill { border:1px solid #ffffff66; border-radius:99px; padding:3px 10px; font-size:12px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:18px 0; }
+    .card,section { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 4px 13px #1734530a; }
+    .card { padding:17px 18px; }
+    .card strong { display:block; font-size:28px; line-height:1.22; }
+    .card span { color:var(--muted); font-size:13px; }
+    section { margin-top:16px; padding:22px 25px; }
+    .callout { border-radius:10px; padding:12px 16px; margin:12px 0; border-left:5px solid var(--teal); background:#eaf5f2; }
+    .caution { border-left-color:#e3a132; background:#fff6e7; }
+    .error { border-left-color:#cf7165; background:#fff0ed; }
+    .two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .flow { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:9px; margin:16px 0; }
+    .flow div { position:relative; padding:13px; border:1px solid #cddfe9; border-radius:11px; background:#f4f9fc; min-height:126px; }
+    .flow div:not(:last-child)::after { content:"→"; position:absolute; right:-13px; top:43px; z-index:1; color:var(--teal); font-size:22px; font-weight:700; }
+    .flow b { display:block; color:var(--blue); margin-bottom:4px; }
+    .flow small { display:block; color:var(--muted); line-height:1.45; }
+    .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+    table { width:100%; min-width:650px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+    th,td { padding:9px 11px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+    th:first-child,td:first-child { text-align:left; }
+    thead { background:#ebf3f7; color:#3e5971; }
+    tbody tr:nth-child(even) { background:#f9fbfc; }
+    tbody tr:last-child td { border-bottom:0; }
+    .pending { color:var(--amber); font-weight:700; }
+    .bad { color:var(--red); font-weight:700; }
+    .good { color:var(--teal); font-weight:700; }
+    .muted,small { color:var(--muted); }
+    code { background:#edf3f7; border-radius:4px; padding:1px 5px; overflow-wrap:anywhere; }
+    pre { margin:9px 0; padding:12px 15px; background:#eaf1f5; border-radius:9px; overflow-x:auto; font-size:13px; }
+    pre code { padding:0; background:none; }
+    a { color:var(--blue); text-underline-offset:3px; }
+    ul { margin:8px 0; padding-left:21px; }
+    li { margin:5px 0; }
+    footer { padding:17px 3px 0; font-size:12px; color:var(--muted); }
+    @media (max-width:880px) { .grid,.two { grid-template-columns:repeat(2,minmax(0,1fr)); } .flow { grid-template-columns:1fr; } .flow div { min-height:0; } .flow div::after { display:none; } }
+    @media (max-width:550px) { main { padding:12px 9px 34px; } header { padding:23px 18px; } section { padding:18px 15px; } .grid,.two { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>RoboTwin 双流自回归后训练</h1>
+    <p>方法、数据流程与阶段结果｜8 个动作 token + 64 个物理 token</p>
+    <div class="pills"><span class="pill">历史共享头快照：2026-10-27 14:33 北京时间</span><span class="pill">50 任务</span><span class="pill">模型：Qwen3-VL-4B</span><span class="pill">环境：vlact</span></div>
+  </header>
+
+  <section>
+    <h2>重要更新：默认架构已改为严格分模态绑权</h2>
+    <p>本页以下数字是当时的<strong>历史共享头快照</strong>，不是当前训练状态。现在文字表冻结，动作、物理各有独立输入表，并分别与本模态输出头绑权；严格方案已完成 500 步。相同 500 步、两个任务 32 样本面板上，动作/物理 top-1：共享头 25/256、0/2048；仅分输出头 21/256、1/2048；严格绑权 19/256、1/2048。小面板无法证明哪个更好。详见<a href="ROBOTWIN_AR_GENERATION_TRAINING.html#strict-tying">当前训练/推理细节与对照</a>及<a href="ROBOTWIN_DUAL_AR_POSTTRAIN.md">完整 Markdown 记录</a>。</p>
+  </section>
+
+  <div class="grid" aria-label="关键状态">
+    <div class="card"><strong>72</strong><span>每样本固定输出：8 动作 + 64 物理 ID</span></div>
+    <div class="card"><strong>421,990</strong><span>完整 clip 的训练目标行</span></div>
+    <div class="card"><strong>500 / 500</strong><span>第一阶段已完成并保存 checkpoint</span></div>
+    <div class="card"><strong>≈366 / 5,000</strong><span>历史共享头快照的当时观察值；非当前进度</span></div>
+  </div>
+
+  <section id="conclusion">
+    <h2>先看结论</h2>
+    <div class="callout"><strong>已经实现：</strong>从当前图像和语言指令出发，VLM 按顺序自回归预测动作码、再预测物理码；训练与推理都使用两套独立的 token 词表。不是一次性并行输出 72 个 ID。</div>
+    <div class="callout caution"><strong>尚未证明有效：</strong>500 步短训的 4 个留出样本里，动作与物理 token 的 teacher-forced top-1 准确率均为 0。较长的 5,000 步续训正在跑，当前不能说已得到可用策略、物理语言或 rollout 成功率。</div>
+    <p>本阶段是<strong>部分 VLM 后训练</strong>，不是整套 VLA 全参数训练：视觉编码器与前面的语言层冻结；更新最后 2 层语言层、norm、共享 token embedding/输出头，约 6.006 亿可训练参数。原连续动作扩散头不参与。</p>
+  </section>
+
+  <section id="method">
+    <h2>方法：输入什么、输出什么</h2>
+    <div class="two">
+      <div><h3>动作流</h3><p>对 32 步动作 chunk，冻结的 EMA-VQ tokenizer 导出 8 个 ID；每个位置从 K=525 个 <code>&lt;robot_action_i&gt;</code> 中选一个。VLM 的 8 个输出用于离散动作预测；本阶段尚未报告解码后的动作误差或机器人执行结果。</p></div>
+      <div><h3>物理流</h3><p>冻结的空间对齐 EMA-VQ tokenizer 从 17 帧视觉特征变化导出 64 个 ID；每个位置从 K=2048 个 <code>&lt;robot_physics_i&gt;</code> 中选一个。训练标签含未来信息，但 VLM 输入只用当前图像与任务语言，推理不看未来帧。</p></div>
+    </div>
+    <pre><code>当前图像 + 任务语言 → Qwen3-VL → A1 … A8 → P1 … P64
+                         动作 K525     物理 K2048</code></pre>
+    <p>固定 72 个输出位置，推理时逐位置约束候选词表并贪心生成。训练使用 teacher forcing 的因果 LM loss，只监督这 72 个目标符号；提示词、padding 和结束符不计损失。动作平均 CE 与物理平均 CE 各乘权重 1 后相加，避免 64 个物理位置淹没 8 个动作位置。</p>
+    <p class="muted"><small>与 PhiZero 相似的是“冻结 tokenizer → 导出离散真值 → VLM 自回归预测”的流程；这里不是 PhiZero 的 256-token/K25000 视频 tokenizer，也没有 Wan 视频重建损失。</small></p>
+  </section>
+
+  <section id="pipeline">
+    <h2>数据与训练流程</h2>
+    <div class="flow" aria-label="从缓存到评估的五步流程">
+      <div><b>① 冻结 tokenizer</b><small>动作 EMA-VQ 8×525；物理空间对齐 EMA-VQ 64×2048，均使用已训 20,000-step 权重。</small></div>
+      <div><b>② 导出 ID</b><small>在 vlact 环境导出动作、物理目标；按 task / episode / base_index 严格合并。</small></div>
+      <div><b>③ 筛选完整 clip</b><small>只保留未来帧完整的 469,787 行；固定 episode 留出，防止训练/验证混入。</small></div>
+      <div><b>④ VLM 后训练</b><small>100k-step Qwen 权重严格加载；扩展 2,048 个物理符号；4 GPU、ZeRO-2。</small></div>
+      <div><b>⑤ 留出诊断</b><small>先看 teacher-forced CE/准确率，再看真正自回归生成；rollout 尚未做。</small></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>数据口径</th><th>数量</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>全部原始对齐位置</td><td>549,787</td><td>动作缓存覆盖的 50 任务位置</td></tr>
+        <tr><td>完整双流目标</td><td>469,787</td><td>要求未来 clip 全有效；动作/物理按键精确匹配</td></tr>
+        <tr><td>训练目标</td><td>421,990</td><td>排除 episode 5、20、25、39、49</td></tr>
+        <tr><td>留出目标</td><td>47,797</td><td>仅上述 5 个 episode 的完整 clip</td></tr>
+      </tbody>
+    </table></div>
+    <p><small>训练日志中的 <code>493,990/549,787 steps kept</code> 只是 episode 过滤后的底层步数；实际双流采样还通过 <code>drop_missing=True</code> 筛到缓存里有完整目标的位置，不应把 493,990 当作训练监督行数。</small></p>
+  </section>
+
+  <section id="results">
+    <h2>已完成的 500 步：结果与解释</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>训练 batch</th><th>动作 CE ↓</th><th>物理 CE ↓</th><th>两流之和 ↓</th><th>解释</th></tr></thead>
+      <tbody>
+        <tr><td>Step 10</td><td>13.019</td><td>13.685</td><td>26.704</td><td>刚开始适配新增符号</td></tr>
+        <tr><td>Step 500</td><td>4.275</td><td>7.465</td><td>11.740</td><td>单个训练 batch，不是留出均值</td></tr>
+      </tbody>
+    </table></div>
+    <h3 style="margin-top:18px">小留出诊断：2 个任务 × 每任务 2 个样本</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>指标</th><th>动作</th><th>物理</th><th>口径</th></tr></thead>
+      <tbody>
+        <tr><td>Teacher-forced CE ↓</td><td>5.750</td><td>7.662</td><td>已知前面正确 token 时预测下一 token</td></tr>
+        <tr><td>Teacher-forced top-1 accuracy ↑</td><td class="bad">0 / 32</td><td class="bad">0 / 256</td><td>4 个样本，共 8 / 64 个位置</td></tr>
+        <tr><td>Free-running top-1 accuracy ↑</td><td class="bad">0%</td><td class="bad">0%</td><td>另对其中 2 个样本逐 token 自生成</td></tr>
+        <tr><td>Free-running 全序列准确</td><td class="bad">0 / 2</td><td class="bad">0 / 2</td><td>动作、物理各自整段精确匹配</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout error"><strong>不能过度解读：</strong>4 个样本过小，0 准确率不能代表全任务真实水平；但至少说明当前短训没有提供正面的留出证据。物理 CE 7.662 接近 <code>ln(2048)≈7.625</code>，只是量级参照，不是严格随机基线（实际 CE 在完整 VLM 词表上算）。不能把 tokenizer 自身的重建 RMSE 当作 VLM 预测效果。</div>
+    <p>对照来源：<a href="/results/Checkpoints/qwen_dual_ar_8a64p_full50_seed42_steps500/heldout_diagnostic.json">500 步原始留出 JSON</a>。还没有动作解码误差、物理重建误差的 VLM 端到端评估，也没有机器人 rollout 成功率。</p>
+  </section>
+
+  <section id="ongoing">
+    <h2>进行中：从 500 步权重继续训练</h2>
+    <p><span class="pending">5,000-step 作业在运行</span>：先严格加载 100k-step Qwen 基座，再恢复 500-step checkpoint 的 24 个可训练张量；训练优化器重新创建。观察到约 <strong>366 / 5,000</strong> 步（14:33 静态快照）。第 10 步动作 CE 4.316、物理 CE 7.492；这些仍是训练 batch 数字。该作业的最终 checkpoint 和留出结果<span class="pending">尚未产生</span>。</p>
+    <p>使用 node001 的 GPU 0–3、<code>vlact</code> 环境、DeepSpeed ZeRO-2。预计训练本体约 1.5 小时，之后还需保存与诊断；服务器上其他任务不会被本流程停止或清理。</p>
+    <div class="callout caution"><strong>下一步判定：</strong>至少要比较相同留出划分的逐流 CE 与 top-1，增加足够大的跨任务样本 panel，并评估自由生成后的动作解码误差与物理变化重建；若物理 CE/准确率仍无改善，需要复查目标可预测性、时间对齐、输入信息量和训练预算。当前不能比较它与全 VLA 联训或 PhiZero 的下游优劣。</div>
+  </section>
+
+  <section id="files">
+    <h2>可核对的源码与记录</h2>
+    <ul>
+      <li><a href="/docs/ROBOTWIN_DUAL_AR_POSTTRAIN.md">详细 Markdown 实验记录</a></li>
+      <li><code>starVLA/model/framework/QwenDualAutoregressiveReasoner.py</code>：模型、损失、推理约束</li>
+      <li><code>examples/Robotwin/train_files/qwen_dual_ar_8action_64physics_full50.yaml</code>：后训练参数</li>
+      <li><code>scripts/physical_tokens/run_full50_dual_autoregressive_reasoner.sh</code>：导出、合并、训练、诊断入口</li>
+      <li><code>scripts/physical_tokens/evaluate_dual_autoregressive_reasoner.py</code>：留出评估定义</li>
+    </ul>
+    <p><small>本页面为人工核对用的固定时间快照，不会随训练自动刷新；新增结果应更新该 HTML 与 Markdown。模型权重及数据缓存不通过网页服务公开。</small></p>
+  </section>
+  <footer>RoboTwin 50-task / dual autoregressive post-training · 2026-10-27 14:33 CST</footer>
+</main>
+</body>
+</html>

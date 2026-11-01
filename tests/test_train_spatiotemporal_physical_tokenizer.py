@@ -66,6 +66,28 @@ def test_legacy_cache_defaults_to_single_task(tmp_path: Path) -> None:
     np.testing.assert_array_equal(dataset.task_ids, [0, 0])
 
 
+def test_external_feature_array_matches_archive_samples(tmp_path: Path) -> None:
+    path = tmp_path / "features.npz"
+    array_path = tmp_path / "frame_features.npy"
+    features = np.arange(24, dtype=np.float16).reshape(4, 2, 3)
+    np.save(array_path, features)
+    np.savez(
+        path,
+        frame_features=features,
+        source_frame_indices=np.asarray([[0, 1], [2, 3]]),
+        future_valid_mask=np.ones((2, 2), dtype=np.bool_),
+        episode_ids=np.asarray([0, 1]),
+        base_indices=np.zeros(2, dtype=np.int64),
+        offsets=np.asarray([0, 1]),
+    )
+    archived = SpatiotemporalFeatureDataset(path)
+    cached = SpatiotemporalFeatureDataset(path, feature_array_cache=array_path)
+
+    assert isinstance(cached.frame_features, np.memmap)
+    for index in range(len(cached)):
+        torch.testing.assert_close(cached[index]["features"], archived[index]["features"])
+
+
 def test_validation_shards_cover_indices_once_without_padding() -> None:
     indices = list(range(11))
     shards = [shard_indices_without_padding(indices, rank, 4) for rank in range(4)]
@@ -110,8 +132,16 @@ def test_evaluate_metrics_are_batch_size_invariant() -> None:
         "rmse",
         "continuous_rmse",
         "no_motion_rmse",
+        "future_feature_rmse",
+        "final_feature_rmse",
+        "frozen_future_feature_rmse",
+        "effective_bits_per_token",
         "perplexity",
         "active_ratio",
         "temporal_reverse_token_change",
     ):
         assert metrics_two[key] == pytest.approx(metrics_four[key], abs=1e-7)
+    assert metrics_two["effective_bits_per_token"] == pytest.approx(
+        np.log2(metrics_two["perplexity"]), abs=1e-6
+    )
+    assert metrics_two["fixed_bits_per_token"] == pytest.approx(3.0)

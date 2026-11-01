@@ -190,13 +190,17 @@ class FiniteScalarQuantizer(nn.Module):
         self, projected: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         level_max = self.levels.to(projected.dtype) - 1.0
-        bounded_digits = (torch.tanh(projected) + 1.0) * 0.5 * level_max
+        bounded_digits = (self._activation(projected) + 1.0) * 0.5 * level_max
         digits = bounded_digits.round().long().clamp_min(0)
         digits = torch.minimum(digits, self.levels - 1)
         ids = (digits * self.basis).sum(dim=-1)
         hard_normalized = digits.to(projected.dtype) / level_max * 2.0 - 1.0
         soft_normalized = bounded_digits / level_max * 2.0 - 1.0
         return hard_normalized, soft_normalized, ids
+
+    @staticmethod
+    def _activation(projected: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(projected)
 
     def _quantize(self, projected: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         hard_normalized, soft_normalized, ids = self._normalized_values(projected)
@@ -228,6 +232,60 @@ class FiniteScalarQuantizer(nn.Module):
         """Apply the learned FSQ bottleneck while omitting only scalar rounding."""
         _, soft_normalized, _ = self._normalized_values(self.project_in(tokens))
         return self.project_out(soft_normalized)
+
+
+class OfficialFiniteScalarQuantizer(FiniteScalarQuantizer):
+    """Default asymmetric FSQ bound from vector-quantize-pytorch.
+
+    Keep FiniteScalarQuantizer unchanged for existing symmetric-grid checkpoints.
+    The upstream default rejects levels of 2 unless preserve_symmetry is enabled.
+    """
+
+    def __init__(self, dim: int, levels: Iterable[int]) -> None:
+        levels = tuple(int(level) for level in levels)
+        if any(level == 2 for level in levels):
+            raise ValueError("official default FSQ requires levels != 2")
+        super().__init__(dim, levels)
+
+    def _normalized_values(
+        self, projected: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        levels = self.levels.to(dtype=projected.dtype)
+        half_width = (self.levels // 2).to(dtype=projected.dtype)
+        half_l = (levels - 1.0) * (1.0 + 1e-3) / 2.0
+        offset = torch.where(self.levels % 2 == 0, 0.5, 0.0).to(dtype=projected.dtype)
+        shift = torch.atanh(offset / half_l)
+        bounded = torch.tanh(projected + shift) * half_l - offset
+        rounded = bounded.round()
+        digits = (rounded.long() + self.levels // 2).clamp_min(0)
+        digits = torch.minimum(digits, self.levels - 1)
+        ids = (digits * self.basis).sum(dim=-1)
+        hard_normalized = (digits.to(projected.dtype) - half_width) / half_width
+        soft_normalized = bounded / half_width
+        return hard_normalized, soft_normalized, ids
+
+    def decode(self, ids: torch.Tensor) -> torch.Tensor:
+        if ids.min() < 0 or ids.max() >= self.codebook_size:
+            raise ValueError("FSQ token id is outside the finite code space")
+        digits = (ids.long().unsqueeze(-1) // self.basis) % self.levels
+        half_width = (self.levels // 2).to(dtype=self.project_out.weight.dtype)
+        normalized = (digits.to(half_width.dtype) - half_width) / half_width
+        return self.project_out(normalized)
+
+
+class ImprovedFiniteScalarQuantizer(FiniteScalarQuantizer):
+    """Official iFSQ simple-bound activation with odd scalar levels."""
+
+    def __init__(self, dim: int, levels: Iterable[int] = (3, 5, 5, 7)) -> None:
+        levels = tuple(int(level) for level in levels)
+        if any(level % 2 == 0 for level in levels):
+            raise ValueError("official iFSQ simple bound requires odd levels")
+        super().__init__(dim, levels)
+
+    @staticmethod
+    def _activation(projected: torch.Tensor) -> torch.Tensor:
+        # iFSQ official source: act_fun_mapping["scale_sigmoid_16"].
+        return 2.0 * torch.sigmoid(1.6 * projected) - 1.0
 
 
 class _TemporalEncoder(nn.Module):
@@ -305,6 +363,8 @@ class ActionChunkTokenizer(nn.Module):
             )
         elif quantizer == "fsq":
             self.quantizer = FiniteScalarQuantizer(latent_dim, fsq_levels)
+        elif quantizer == "ifsq":
+            self.quantizer = ImprovedFiniteScalarQuantizer(latent_dim, fsq_levels)
         else:
             raise ValueError(f"unsupported quantizer: {quantizer}")
 

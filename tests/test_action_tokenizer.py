@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -9,7 +10,9 @@ from starVLA.model.modules.tokenizers import (
     ActionChunkTokenizer,
     EMAVectorQuantizer,
     FiniteScalarQuantizer,
+    ImprovedFiniteScalarQuantizer,
 )
+from starVLA.model.modules.tokenizers.action_tokenizer import OfficialFiniteScalarQuantizer
 
 
 def _run_distributed_ema_update(rank: int, init_file: str, output_dir: str) -> None:
@@ -94,6 +97,63 @@ def test_fsq_ids_decode_to_the_same_quantized_values():
     assert torch.allclose(quantized, quantizer.decode(ids), atol=1e-6)
 
 
+def test_official_default_fsq_bound_matches_reference_formula_and_round_trip():
+    torch.manual_seed(14)
+    levels = (8, 4, 4, 4, 4)
+    quantizer = OfficialFiniteScalarQuantizer(12, levels)
+    inputs = torch.randn(3, 6, 12, requires_grad=True)
+    projected = quantizer.project_in(inputs)
+    level_tensor = torch.tensor(levels, dtype=projected.dtype)
+    half_l = (level_tensor - 1) * (1 + 1e-3) / 2
+    offset = torch.full_like(level_tensor, 0.5)
+    bounded = torch.tanh(projected + torch.atanh(offset / half_l)) * half_l - offset
+    half_width = level_tensor // 2
+    reference_codes = bounded.round() / half_width
+    reference_ids = ((bounded.round().long() + half_width.long()) * quantizer.basis).sum(-1)
+
+    quantized, ids, _ = quantizer(inputs)
+    assert quantizer.codebook_size == 2048
+    assert torch.equal(ids, reference_ids)
+    assert torch.allclose(quantized, quantizer.project_out(reference_codes), atol=1e-6)
+    assert torch.allclose(quantized, quantizer.decode(ids), atol=1e-6)
+    quantized.square().mean().backward()
+    assert inputs.grad is not None and torch.isfinite(inputs.grad).all()
+    assert quantizer.project_in.weight.grad is not None
+
+
+def test_official_default_fsq_rejects_binary_level():
+    with pytest.raises(ValueError, match="levels != 2"):
+        OfficialFiniteScalarQuantizer(12, (4, 4, 2))
+
+
+def test_ifsq_matches_official_simple_bound_and_round_trip():
+    torch.manual_seed(23)
+    levels = (3, 5, 5, 7)
+    quantizer = ImprovedFiniteScalarQuantizer(12, levels=levels)
+    inputs = torch.randn(3, 6, 12, requires_grad=True)
+    projected = quantizer.project_in(inputs)
+    half_width = torch.tensor(levels, dtype=projected.dtype) // 2
+    official_bound = (2.0 * torch.sigmoid(1.6 * projected) - 1.0) * half_width
+    official_codes = official_bound.round() / half_width
+    official_ids = (
+        (official_bound.round().long() + half_width.long()) * quantizer.basis
+    ).sum(dim=-1)
+
+    quantized, ids, _ = quantizer(inputs)
+    assert quantizer.codebook_size == 525
+    assert torch.equal(ids, official_ids)
+    assert torch.allclose(quantized, quantizer.project_out(official_codes), atol=1e-6)
+    assert torch.allclose(quantized, quantizer.decode(ids), atol=1e-6)
+    quantized.square().mean().backward()
+    assert inputs.grad is not None and torch.isfinite(inputs.grad).all()
+    assert quantizer.project_in.weight.grad is not None
+
+
+def test_ifsq_rejects_even_levels_from_non_official_simple_bound():
+    with pytest.raises(ValueError, match="odd levels"):
+        ImprovedFiniteScalarQuantizer(12, levels=(8, 8, 8))
+
+
 def test_fsq_continuous_projection_keeps_learned_bottleneck_without_rounding():
     torch.manual_seed(12)
     quantizer = FiniteScalarQuantizer(12, levels=(4, 4, 8))
@@ -142,7 +202,8 @@ def test_action_tokenizer_masks_invalid_dimensions_and_steps():
     assert any(parameter.grad is not None for parameter in model.encoder.parameters())
 
 
-def test_action_tokenizer_checkpoint_round_trip_and_decode():
+@pytest.mark.parametrize("quantizer,levels", [("fsq", (4, 4, 4)), ("ifsq", (3, 5, 7))])
+def test_action_tokenizer_checkpoint_round_trip_and_decode(quantizer, levels):
     torch.manual_seed(17)
     first = ActionChunkTokenizer(
         action_dim=14,
@@ -150,8 +211,8 @@ def test_action_tokenizer_checkpoint_round_trip_and_decode():
         num_tokens=8,
         hidden_dim=32,
         latent_dim=16,
-        quantizer="fsq",
-        fsq_levels=(4, 4, 4),
+        quantizer=quantizer,
+        fsq_levels=levels,
     ).eval()
     actions = torch.randn(2, 32, 14)
     first_output = first(actions)
@@ -162,8 +223,8 @@ def test_action_tokenizer_checkpoint_round_trip_and_decode():
         num_tokens=8,
         hidden_dim=32,
         latent_dim=16,
-        quantizer="fsq",
-        fsq_levels=(4, 4, 4),
+        quantizer=quantizer,
+        fsq_levels=levels,
     ).eval()
     second.load_state_dict(first.state_dict())
     second_output = second(actions)

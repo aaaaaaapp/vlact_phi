@@ -59,3 +59,21 @@ def test_token_cache_fails_on_missing_step(tmp_path: Path):
         assert "(4, 1)" in str(error)
     else:
         raise AssertionError("missing cache entries must fail")
+
+
+def test_token_cache_can_drop_steps_without_complete_future(tmp_path: Path):
+    path = tmp_path / "tokens.npz"
+    np.savez(
+        path,
+        action_token_ids=np.asarray([[1, 2]], dtype=np.int32),
+        physics_token_ids=np.asarray([[3, 4]], dtype=np.int32),
+        episode_ids=np.asarray([4], dtype=np.int64),
+        base_indices=np.asarray([1], dtype=np.int64),
+    )
+    wrapped = TokenConditionedDataset(
+        FakeDataset(), DiscreteTokenCache(path), drop_missing=True
+    )
+    assert len(wrapped) == 1
+    assert wrapped.all_steps == [(4, 1)]
+    assert wrapped[0]["value"] == 1
+    assert wrapped[0]["physics_token_ids"].tolist() == [3, 4]
