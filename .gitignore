@@ -18,6 +18,8 @@ wandb/
 *.mp4
 *.avi
 *.mov
+*.mkv
+*.webm
 
 # Version the hard-episode gallery media used by the checked-in report;
 # keep videos elsewhere as experiment outputs.
