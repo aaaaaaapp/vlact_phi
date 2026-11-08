@@ -96,6 +96,40 @@ def extract_dual_generated_ids(generated_ids: torch.Tensor, *, prompt_width: int
     return action, physics
 
 
+def aligned_dual_token_hidden(
+    hidden: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    action_offset: int,
+    action_vocab_size: int,
+    physics_offset: int,
+    physics_vocab_size: int,
+    action_count: int = 32,
+    physics_count: int = 64,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the final-layer states that predict each supervised code ID.
+
+    In a causal LM the hidden state at position i-1 predicts the token at i.
+    Selecting states with the shifted label mask keeps that alignment even
+    when prompts in a batch have different padded lengths.
+    """
+    if hidden.ndim != 3 or labels.ndim != 2 or hidden.shape[:2] != labels.shape:
+        raise ValueError("hidden and labels must be [B, L, H] and [B, L]")
+    shifted = labels[:, 1:]
+    predictors = hidden[:, :-1]
+    action_mask = (shifted >= action_offset) & (shifted < action_offset + action_vocab_size)
+    physics_mask = (shifted >= physics_offset) & (shifted < physics_offset + physics_vocab_size)
+    if not torch.all(action_mask.sum(dim=1) == action_count):
+        raise ValueError(f"each sample must have {action_count} action targets")
+    if not torch.all(physics_mask.sum(dim=1) == physics_count):
+        raise ValueError(f"each sample must have {physics_count} physics targets")
+    batch, width = hidden.shape[0], hidden.shape[-1]
+    return (
+        predictors[action_mask].reshape(batch, action_count, width),
+        predictors[physics_mask].reshape(batch, physics_count, width),
+    )
+
+
 def keep_only_dual_target_labels(inputs: dict[str, torch.Tensor], *,
                                  action_offset: int, action_vocab_size: int,
                                  physics_offset: int, physics_vocab_size: int,
@@ -196,8 +230,8 @@ class QwenDualAutoregressiveReasoner(QwenActionTokenReasoner):
             raise ValueError("dual CE weights must be positive")
         if self.action_token_count not in (8, 32) or self.physics_token_count != 64:
             raise ValueError("this reasoner requires 8 or 32 action tokens and 64 physics tokens")
-        if self.action_vocab_size != 525 or self.physics_vocab_size != 2048:
-            raise ValueError("checkpoint contract requires action K525 and physics K2048")
+        if self.action_vocab_size != 525 or self.physics_vocab_size not in (2048, 25000):
+            raise ValueError("checkpoint contract requires action K525 and physics K2048 or K25000")
         tokenizer = self.qwen_vl_interface.processor.tokenizer
         symbols = [f"<robot_physics_{index}>" for index in range(self.physics_vocab_size)]
         existing = [tokenizer.convert_tokens_to_ids(symbol) for symbol in symbols]

@@ -5,6 +5,7 @@
 # Modification: [suport topdowm processing, suport param from config].
 
 import inspect
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -16,6 +17,16 @@ from starVLA.dataloader.gr00t_lerobot.mixtures import DATASET_NAMED_MIXTURES
 from starVLA.dataloader.gr00t_lerobot.data_config import ROBOT_TYPE_CONFIG_MAP
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import ROBOT_TYPE_TO_EMBODIMENT_TAG, EmbodimentTag
 from starVLA.dataloader.token_cache import DiscreteTokenCache, TokenConditionedDataset
+
+
+@lru_cache(maxsize=8)
+def _shared_discrete_token_cache(resolved_path: str) -> DiscreteTokenCache:
+    """Reuse the immutable token index across tasks in one training rank.
+
+    A 100-task mixture must not decode and index the same multi-million-row
+    NPZ once per task. The cache is constructed before DataLoader workers fork.
+    """
+    return DiscreteTokenCache(Path(resolved_path))
 
 
 def _resolve_pretrained_statistics_path(data_cfg) -> Path | None:
@@ -187,7 +198,7 @@ def make_LeRobotSingleDataset(
     if token_cache_path:
         dataset = TokenConditionedDataset(
             dataset,
-            DiscreteTokenCache(Path(str(token_cache_path))),
+            _shared_discrete_token_cache(str(Path(str(token_cache_path)).resolve())),
             task_name=data_name,
             drop_missing=bool(effective_data_cfg.get("discrete_token_cache_drop_missing", False)),
         )

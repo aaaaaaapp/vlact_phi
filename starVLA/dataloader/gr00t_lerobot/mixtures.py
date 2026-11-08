@@ -463,6 +463,17 @@ DATASET_NAMED_MIXTURES["robotwin_wrap_32"] = [
     for dataset_name, dataset_weight, _ in DATASET_NAMED_MIXTURES["robotwin"]
 ]
 
+# The local Clean conversion lives directly under RoboTwin/<task>, whereas
+# Randomized lives under RoboTwin/Randomized/<task>. Equal per-task weights
+# give each domain half of the dataset draws.
+DATASET_NAMED_MIXTURES["robotwin_clean_randomized_wrap_32"] = [
+    (dataset_name, 1.0, "robotwin_wrap32")
+    for dataset_name, _, _ in DATASET_NAMED_MIXTURES["robotwin"]
+] + [
+    (f"Randomized/{dataset_name}", 1.0, "robotwin_wrap32")
+    for dataset_name, _, _ in DATASET_NAMED_MIXTURES["robotwin"]
+]
+
 DATASET_NAMED_MIXTURES["robotwin_wrap_50"] = [
     (dataset_name, dataset_weight, "robotwin_wrap50")
     for dataset_name, dataset_weight, _ in DATASET_NAMED_MIXTURES["robotwin"]
@@ -481,6 +492,25 @@ DATASET_NAMED_MIXTURES["robotwin_all_wrap_32"] = [
 DATASET_NAMED_MIXTURES["robotwin_all_wrap_50"] = [
     (dataset_name, dataset_weight, "robotwin_wrap50")
     for dataset_name, dataset_weight, _ in DATASET_NAMED_MIXTURES["robotwin_all"]
+]
+
+# Robotwin randomized-only tree. This is useful when Clean is not materialized.
+DATASET_NAMED_MIXTURES["robotwin_randomized_50"] = [
+    (dataset_name, dataset_weight, "robotwin50")
+    for dataset_name, dataset_weight, _ in DATASET_NAMED_MIXTURES["robotwin_all_50"]
+    if dataset_name.startswith("Randomized/")
+]
+
+# Local RoboTwin layout used on node2: Clean tasks are directly under
+# RoboTwin/<task>, while randomized tasks are under RoboTwin/Randomized/<task>.
+# Both use the AgileX-compatible robotwin50 schema.
+DATASET_NAMED_MIXTURES["robotwin_clean_randomized_50"] = [
+    (
+        dataset_name[len("Clean/"):] if dataset_name.startswith("Clean/") else dataset_name,
+        dataset_weight,
+        "robotwin50",
+    )
+    for dataset_name, dataset_weight, _ in DATASET_NAMED_MIXTURES["robotwin_all_50"]
 ]
 
 # Dynamically load InternData-A1 split_aloha mixture from task list file

@@ -170,6 +170,35 @@ class CrossAttention(nn.Module):
         return self.o_proj(out)
 
 
+class ConcatCrossAttentionFusion(nn.Module):
+    """Fuse separate prefix, action, and physics attention results.
+
+    The original prefix attention stays on its pretrained path.  The MLP
+    learns a correction from all three sources and starts at exactly zero.
+    """
+
+    def __init__(self, hidden_dim: int, bottleneck_dim: int = 256):
+        super().__init__()
+        self.norm = nn.LayerNorm(3 * hidden_dim)
+        self.input_proj = nn.Linear(3 * hidden_dim, bottleneck_dim)
+        self.output_proj = nn.Linear(bottleneck_dim, hidden_dim)
+        nn.init.zeros_(self.output_proj.weight)
+        nn.init.zeros_(self.output_proj.bias)
+
+    def forward(
+        self,
+        prefix: torch.Tensor,
+        action: torch.Tensor | None,
+        physics: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if action is None and physics is None:
+            return torch.zeros_like(prefix)
+        action = torch.zeros_like(prefix) if action is None else action
+        physics = torch.zeros_like(prefix) if physics is None else physics
+        features = self.norm(torch.cat((prefix, action, physics), dim=-1))
+        return self.output_proj(F.silu(self.input_proj(features)))
+
+
 # ============================================================
 # Modified Qwen3 expert layer wrapper
 # ============================================================
@@ -226,6 +255,7 @@ class Qwen3ExpertLayer(nn.Module):
         residual_gate: torch.Tensor | None = None,
         physics_residual_prefix_hidden: torch.Tensor | None = None,
         physics_residual_gate: torch.Tensor | None = None,
+        concat_fuser: nn.Module | None = None,
     ) -> torch.Tensor:
         # 1. Bidirectional self-attention (pretrained weights)
         normed = self.input_layernorm(x, time_cond)
@@ -240,23 +270,37 @@ class Qwen3ExpertLayer(nn.Module):
 
         # 2. Cross-attention to prefix (new, zero-init o_proj → starts at ~0)
         cross_attn_query = self.cross_attn_norm(x, time_cond)
-        x = x + self.cross_attn(cross_attn_query, prefix_hidden)
-        if residual_prefix_hidden is not None:
-            if residual_gate is None:
-                raise ValueError("residual_gate is required with residual_prefix_hidden")
-            residual = self.cross_attn(cross_attn_query, residual_prefix_hidden)
-            x = x + residual * residual_gate.to(dtype=residual.dtype)
-        if physics_residual_prefix_hidden is not None:
-            if physics_residual_gate is None:
-                raise ValueError(
-                    "physics_residual_gate is required with physics residual memory"
+        prefix_attention = self.cross_attn(cross_attn_query, prefix_hidden)
+        if concat_fuser is not None:
+            action_attention = (
+                self.cross_attn(cross_attn_query, residual_prefix_hidden)
+                if residual_prefix_hidden is not None else None
+            )
+            physics_attention = (
+                self.cross_attn(cross_attn_query, physics_residual_prefix_hidden)
+                if physics_residual_prefix_hidden is not None else None
+            )
+            x = x + prefix_attention + concat_fuser(
+                prefix_attention, action_attention, physics_attention
+            )
+        else:
+            x = x + prefix_attention
+            if residual_prefix_hidden is not None:
+                if residual_gate is None:
+                    raise ValueError("residual_gate is required with residual_prefix_hidden")
+                residual = self.cross_attn(cross_attn_query, residual_prefix_hidden)
+                x = x + residual * residual_gate.to(dtype=residual.dtype)
+            if physics_residual_prefix_hidden is not None:
+                if physics_residual_gate is None:
+                    raise ValueError(
+                        "physics_residual_gate is required with physics residual memory"
+                    )
+                physics_residual = self.cross_attn(
+                    cross_attn_query, physics_residual_prefix_hidden
                 )
-            physics_residual = self.cross_attn(
-                cross_attn_query, physics_residual_prefix_hidden
-            )
-            x = x + physics_residual * physics_residual_gate.to(
-                dtype=physics_residual.dtype
-            )
+                x = x + physics_residual * physics_residual_gate.to(
+                    dtype=physics_residual.dtype
+                )
 
         # 3. MLP (pretrained weights)
         x = x + self.mlp(self.post_attention_layernorm(x, time_cond))
@@ -472,6 +516,9 @@ class Qwen_PI_v4(baseframework):
     ) -> torch.Tensor | None:
         return None
 
+    def _expert_concat_fuser(self, layer_index: int) -> nn.Module | None:
+        return None
+
     def _expert_forward(
         self,
         noisy_actions: torch.Tensor,     # [B, T, D]
@@ -513,6 +560,7 @@ class Qwen_PI_v4(baseframework):
                     if physics_residual_prefix is not None
                     else None
                 ),
+                concat_fuser=self._expert_concat_fuser(layer_index),
             )
 
         x = self.expert_final_norm(x, time_cond)

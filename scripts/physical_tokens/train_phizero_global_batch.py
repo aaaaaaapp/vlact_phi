@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from dataclasses import replace
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
@@ -120,6 +121,9 @@ def parse_args():
     parser.add_argument("--global-batch-size", type=int, default=3)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--max-train-steps", type=int, default=None)
+    parser.add_argument("--queries-per-transition", type=int, default=None,
+                        help="Adapt pretrained learned queries (32 to 8 gives 64 tokens for 33 frames).")
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--lr-start", type=float, default=1e-6)
@@ -150,7 +154,40 @@ def parse_args():
         parser.error("Model EMA decay must be in (0, 1)")
     if args.global_batch_size % args.gradient_accumulation_steps:
         parser.error("global batch size must be divisible by gradient accumulation steps")
+    if args.max_train_steps is not None and args.max_train_steps < 1:
+        parser.error("--max-train-steps must be positive")
+    if args.queries_per_transition is not None and args.queries_per_transition < 1:
+        parser.error("--queries-per-transition must be positive")
     return args
+
+
+def adapt_pretrained_queries(model: PhiZeroDiffusionTrainingModel, target_count: int) -> list[int]:
+    """Downsample pretrained QFormer queries without changing the other loaded weights."""
+    old = model.tokenizer.learned_queries
+    source_count, hidden_dim = old.weight.shape
+    if target_count > source_count:
+        raise ValueError(f"Cannot expand {source_count} pretrained queries to {target_count}")
+    # Select the center of each equal-sized source interval. For 32 -> 8 this
+    # selects [2, 6, ..., 30], retaining the source ordering and parameters.
+    indices = (list(range(source_count)) if target_count == source_count else
+               [(2 * index + 1) * source_count // (2 * target_count)
+                for index in range(target_count)])
+    if len(set(indices)) != target_count:
+        raise ValueError("Query selection produced duplicate indices")
+    if target_count != source_count:
+        replacement = torch.nn.Embedding(target_count, hidden_dim, device=old.weight.device,
+                                         dtype=old.weight.dtype)
+        with torch.no_grad():
+            replacement.weight.copy_(old.weight[indices])
+        model.tokenizer.learned_queries = replacement
+    tokenizer_config = replace(model.model_config.motion_tokenizer,
+                               act_embedding_num=target_count)
+    model.tokenizer.config = tokenizer_config
+    token_count = tokenizer_config.physical_language_length(33)
+    model.model_config = replace(model.model_config, motion_tokenizer=tokenizer_config,
+                                 max_motion_tokens=token_count)
+    model.conditioner.max_motion_tokens = token_count
+    return indices
 
 
 def build_lr_scheduler(optimizer, total_steps: int, args):
@@ -256,6 +293,9 @@ def main() -> None:
         ),
         fresh_phi_zero_components=args.fresh_phi_zero_components,
     )
+    query_indices = None
+    if args.queries_per_transition is not None:
+        query_indices = adapt_pretrained_queries(model, args.queries_per_transition)
     trainable_parameters = list(model.trainable_parameters())
     optimizer = torch.optim.AdamW(
         trainable_parameters,
@@ -275,7 +315,11 @@ def main() -> None:
     optimizer_steps_per_epoch = math.ceil(
         batches_per_epoch / args.gradient_accumulation_steps
     )
-    total_steps = optimizer_steps_per_epoch * args.epochs
+    available_steps = optimizer_steps_per_epoch * args.epochs
+    if args.max_train_steps is not None and available_steps < args.max_train_steps:
+        raise ValueError(f"--epochs permits only {available_steps} optimizer steps; "
+                         f"need {args.max_train_steps}")
+    total_steps = args.max_train_steps or available_steps
     scheduler = build_lr_scheduler(optimizer, total_steps, args)
     if accelerator.is_main_process:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -293,6 +337,7 @@ def main() -> None:
             "optimizer_steps_per_epoch": optimizer_steps_per_epoch,
             "total_optimizer_steps": total_steps,
             "effective_global_batch_size": args.global_batch_size,
+            "pretrained_query_indices": query_indices,
         })
         (output_dir / "training_args.json").write_text(json.dumps(run_args, indent=2) + "\n")
     accelerator.wait_for_everyone()
@@ -353,6 +398,8 @@ def main() -> None:
                     save_checkpoint(
                         accelerator, model, output_dir, global_step, model_ema
                     )
+                if global_step >= total_steps:
+                    break
 
         save_checkpoint(
             accelerator,
@@ -360,8 +407,10 @@ def main() -> None:
             output_dir,
             global_step,
             model_ema,
-            final=(epoch + 1 == args.epochs),
+            final=(global_step >= total_steps),
         )
+        if global_step >= total_steps:
+            break
 
     progress.close()
     accelerator.wait_for_everyone()

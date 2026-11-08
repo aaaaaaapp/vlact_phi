@@ -510,6 +510,11 @@ class VLATrainer(TrainerUtils):
             metrics["learning_rate"] = self.lr_scheduler.get_last_lr()[0]
             metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
             wandb.log(metrics, step=self.completed_steps)
+            if _as_bool(getattr(self.config.trainer, "log_metrics_jsonl", False)):
+                record = {"step": self.completed_steps, "metrics": metrics}
+                metrics_path = os.path.join(self.config.output_dir, "train_metrics.jsonl")
+                with open(metrics_path, "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record, default=lambda value: value.item()) + "\n")
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
     def _create_data_iterators(self):

@@ -107,5 +107,5 @@ trainer:
   is_resume: false
   resume_epoch: null
   resume_step: null
-  enable_gradient_checkpointing: true
+  enable_gradient_checkpointing: false
   enable_mixed_precision_training: true

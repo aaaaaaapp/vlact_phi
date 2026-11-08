@@ -3,6 +3,7 @@ import torch
 from types import SimpleNamespace
 
 from starVLA.model.framework.QwenDualAutoregressiveReasoner import (
+    aligned_dual_token_hidden,
     extract_dual_generated_ids,
     format_dual_solution,
     keep_only_dual_target_labels,
@@ -11,6 +12,44 @@ from starVLA.model.framework.QwenDualAutoregressiveReasoner import (
     QwenDualAutoregressiveReasoner,
     attach_text_lora,
 )
+from starVLA.model.framework.QwenPI_v4 import ConcatCrossAttentionFusion
+from starVLA.model.framework.QwenPIv4DualAR32x64 import TokenStateMemory
+
+
+def test_token_hidden_uses_causal_predictor_position_with_padding():
+    hidden = torch.arange(2 * 8, dtype=torch.float32).reshape(2, 8, 1)
+    labels = torch.tensor([
+        [-100, 10, 11, 20, 21, -100, -100, -100],
+        [-100, -100, 10, 11, 20, 21, -100, -100],
+    ])
+    action, physics = aligned_dual_token_hidden(
+        hidden, labels, action_offset=10, action_vocab_size=2,
+        physics_offset=20, physics_vocab_size=2,
+        action_count=2, physics_count=2,
+    )
+    assert action[..., 0].tolist() == [[0.0, 1.0], [9.0, 10.0]]
+    assert physics[..., 0].tolist() == [[2.0, 3.0], [11.0, 12.0]]
+
+
+def test_token_state_memory_and_concat_fusion_trainable_path():
+    table = torch.nn.Embedding(7, 8)
+    memory = TokenStateMemory(vlm_dim=8, expert_dim=4, token_count=3)
+    ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+    hidden = torch.randn(2, 3, 8, requires_grad=True)
+    projected = memory(ids, hidden, table)
+    assert projected.shape == (2, 3, 4)
+    fusion = ConcatCrossAttentionFusion(hidden_dim=4, bottleneck_dim=6)
+    prefix = torch.randn(2, 5, 4)
+    action = projected.mean(dim=1, keepdim=True).expand(-1, 5, -1)
+    physics = torch.randn_like(action)
+    torch.testing.assert_close(fusion(prefix, action, physics), torch.zeros_like(prefix))
+    # The zero-initialized output projection learns first; afterwards the
+    # token-state bridge receives gradients from the continuous-action loss.
+    with torch.no_grad():
+        fusion.output_proj.weight.fill_(0.01)
+    fusion(prefix, action, physics).square().mean().backward()
+    assert hidden.grad is not None and hidden.grad.abs().sum() > 0
+    assert table.weight.grad is not None and table.weight.grad.abs().sum() > 0
 
 
 def test_dual_solution_has_distinct_ordered_vocabularies():

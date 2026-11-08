@@ -53,6 +53,10 @@ def main() -> None:
         help="Keep only rows whose full future clip is valid; keys must match physics IDs exactly.",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--drop-unmatched-physics", action="store_true",
+        help="Drop physics-only tail positions with no complete action chunk; report the count.",
+    )
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"refusing to overwrite {args.output}")
@@ -82,8 +86,13 @@ def main() -> None:
     if len(set(physics_keys)) != len(physics_keys):
         raise ValueError("physics cache contains duplicate qualified keys")
     missing = [key for key in physics_keys if key not in action_rows]
-    if missing:
+    if missing and not args.drop_unmatched_physics:
         raise ValueError(f"action cache is missing {len(missing)} physics keys; first={missing[0]}")
+    if missing:
+        keep = np.asarray([key in action_rows for key in physics_keys], dtype=bool)
+        physics = {key: value if key == "task_names" else value[keep]
+                   for key, value in physics.items()}
+        physics_keys = [key for key in physics_keys if key in action_rows]
     indices = np.asarray([action_rows[key] for key in physics_keys], dtype=np.int64)
 
     arrays = {
@@ -113,6 +122,7 @@ def main() -> None:
         "physics_token_shape": list(arrays["physics_token_ids"].shape),
         "exact_qualified_key_join": True,
         "complete_future_clips_only": args.physics_feature_cache is not None,
+        "dropped_unmatched_physics_rows": len(missing),
         "output_sha256": sha256_file(args.output),
     }
     manifest_path = args.output.with_suffix(args.output.suffix + ".manifest.json")
