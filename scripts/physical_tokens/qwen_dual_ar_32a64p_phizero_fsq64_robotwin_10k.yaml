@@ -1,0 +1,94 @@
+# PhiZero-FSQ64 RoboTwin template. Requires NEW Clean+Randomized -> target 16 FPS,
+# 33-frame K25000 cache. Normal rows: max 8 repeated terminal frames;
+# Clean N<101: force s=0 and s=20; Randomized N<31: force s=0 and s=6.
+# FPS/padding rule are enforced by exporter/manifest, not by this trainer.
+# Validate domain-specific source FPS, target_fps=16, num_frames=33,
+# max_padded_frames=8, short starts and tokenizer SHA at load.
+# Do not run before the data/shape and K25000 1-batch smoke in the experiment doc.
+run_id: qwen_dual_ar_32a64p_phizero_fsq64_k25000_robotwin_clean_randomized_fps16_padcap8_short2_10k
+run_root_dir: results/Checkpoints
+seed: 42
+trackers: [jsonl]
+wandb_entity: your_wandb_entity
+wandb_project: vlact-physical-tokens
+is_debug: false
+
+framework:
+  name: QwenDualAutoregressiveReasoner
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+    attn_implementation: flash_attention_2
+  action_token_reasoner:
+    vocab_size: 525
+    token_count: 32
+    token_offset: 151669
+    train_last_n_layers: 0
+  dual_autoregressive_reasoner:
+    physics_vocab_size: 25000
+    physics_token_count: 64
+    separate_heads: true
+    strict_modality_tying: true
+    uniform_physics_init: true
+    action_ce_weight: 1.0
+    physics_ce_weight: 1.0
+    prompt_template: "Task: {instruction}\nPredict 32 robot action tokens, then 64 future physics tokens."
+    lora:
+      enabled: true
+      rank: 32
+      alpha: 32
+      dropout: 0.05
+      target_modules:
+        - self_attn.q_proj
+        - self_attn.k_proj
+        - self_attn.v_proj
+        - self_attn.o_proj
+        - mlp.gate_proj
+        - mlp.up_proj
+        - mlp.down_proj
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    data_root_dir: /mnt/jfzn/liujn/code/Starvla/Starvla/playground/Datasets/RoboTwin
+    data_mix: robotwin_clean_randomized_wrap_32
+    action_type: abs_qpos
+    action_mode: abs
+    discrete_token_cache: ./artifacts/robotwin_full50_study/phizero_fsq64_fps16/dual_ar_32action_64physics_k25000_clean_randomized_padcap8_short2_targets.npz
+    discrete_token_cache_drop_missing: true
+    exclude_episode_ids: [5, 20, 25, 39, 49]
+    per_device_batch_size: 8  # node2 target: 8 GPUs x 8 x accumulation 2 = global 128
+    image_size: [224, 224]
+    video_backend: pyav
+    include_state: true
+    num_workers: 2
+
+trainer:
+  epochs: 100
+  max_train_steps: 10000
+  num_warmup_steps: 500
+  save_interval: 5000
+  save_trainable_only: true
+  eval_interval: 10001
+  logging_frequency: 10
+  learning_rate:
+    base: 1.0e-5
+    lora_adapters: 1.0e-4
+    action_embeddings: 1.0e-4
+    physics_embeddings: 2.0e-4
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-6
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-8
+    weight_decay: 1.0e-8
+  freeze_modules: ''
+  pretrained_checkpoint: /mnt/jfzn/liujn/models/StarVLA/VLAct_Qwen3PI_Robotwin_all_Finetune/checkpoints/steps_100000_pytorch_model.pt
+  expanded_vocab_warmstart: true
+  is_resume: false
+  reset_steps: true
+  gradient_accumulation_steps: 2
+  gradient_clipping: 1.0
+  enable_gradient_checkpointing: false  # smoke-tested; prefer throughput while 80-GiB cards have headroom
+  enable_mixed_precision_training: true

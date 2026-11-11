@@ -163,6 +163,20 @@ def test_separate_heads_use_only_their_own_vocab_and_receive_gradients():
     assert hidden.grad is not None
 
 
+def test_separate_physics_head_scores_full_phizero_fsq_vocab():
+    action_head = torch.nn.Linear(3, 525, bias=False)
+    physics_head = torch.nn.Linear(3, 25000, bias=False)
+    hidden = torch.randn(1, 3, 3)
+    labels = torch.tensor([[99, 10, 153717 + 24999]])
+    scores = score_separate_heads(
+        hidden, labels, action_head=action_head, physics_head=physics_head,
+        action_offset=10, action_vocab_size=525,
+        physics_offset=153717, physics_vocab_size=25000,
+    )
+    assert scores["physics_logits"].shape == (1, 25000)
+    assert scores["physics_targets"].tolist() == [24999]
+
+
 def test_separate_head_generation_feeds_ids_back_autoregressively():
     class FakeBackbone:
         def __init__(self):

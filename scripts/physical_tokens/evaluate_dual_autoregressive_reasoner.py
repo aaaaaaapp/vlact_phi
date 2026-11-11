@@ -150,8 +150,10 @@ def main() -> None:
                     ).last_hidden_state
                 scores = score_separate_heads(
                     hidden, targets, action_head=model.action_logits, physics_head=model.physics_logits,
-                    action_offset=model.action_token_offset, action_vocab_size=525,
-                    physics_offset=model.physics_token_offset, physics_vocab_size=2048,
+                    action_offset=model.action_token_offset,
+                    action_vocab_size=model.action_vocab_size,
+                    physics_offset=model.physics_token_offset,
+                    physics_vocab_size=model.physics_vocab_size,
                 )
                 action_logits, physics_logits = scores["action_logits"], scores["physics_logits"]
                 action_targets, physics_targets = scores["action_targets"], scores["physics_targets"]
@@ -164,10 +166,16 @@ def main() -> None:
                 )
                 labels = inputs["labels"][:, 1:]
                 shifted_logits = output.logits[:, :-1]
-                action_mask = (labels >= model.action_token_offset) & (labels < model.action_token_offset + 525)
-                physics_mask = (labels >= model.physics_token_offset) & (labels < model.physics_token_offset + 2048)
-                action_logits = shifted_logits[action_mask][:, model.action_token_offset:model.action_token_offset + 525]
-                physics_logits = shifted_logits[physics_mask][:, model.physics_token_offset:model.physics_token_offset + 2048]
+                action_mask = ((labels >= model.action_token_offset)
+                               & (labels < model.action_token_offset + model.action_vocab_size))
+                physics_mask = ((labels >= model.physics_token_offset)
+                                & (labels < model.physics_token_offset + model.physics_vocab_size))
+                action_logits = shifted_logits[action_mask][
+                    :, model.action_token_offset:model.action_token_offset + model.action_vocab_size
+                ]
+                physics_logits = shifted_logits[physics_mask][
+                    :, model.physics_token_offset:model.physics_token_offset + model.physics_vocab_size
+                ]
                 action_targets = labels[action_mask] - model.action_token_offset
                 physics_targets = labels[physics_mask] - model.physics_token_offset
                 action_ce = torch.nn.functional.cross_entropy(shifted_logits[action_mask].float(), labels[action_mask])

@@ -57,21 +57,25 @@ class ParameterEMA:
                     parameters[name].copy_(value)
 
 
-class ExactGlobalBatchSampler(Sampler[int]):
-    """Give each rank one item while keeping the real global batch exact.
+class ExactGlobalBatchSampler(Sampler[list[int]]):
+    """Assign a fixed-size local batch to each rank for every global batch.
 
-    A microbatch smaller than world size gives the remaining ranks a dummy
-    item. They still run forward so DDP participates in every collective, but
-    their loss and EMA-VQ statistics are masked. Every real training item is
-    consumed once per epoch, including the final partial microbatch.
+    Ranks with no real item receive a dummy for DDP synchronization. If a local
+    batch has multiple items, the final partial global batch is filled by
+    repeating items from the current shuffled epoch so every rank keeps a
+    rectangular batch. This only affects the final, small remainder.
     """
 
-    def __init__(self, size: int, global_batch_size: int, rank: int, seed: int) -> None:
+    def __init__(
+        self, size: int, global_batch_size: int, rank: int, world_size: int, seed: int
+    ) -> None:
         self.size = int(size)
         self.global_batch_size = int(global_batch_size)
         self.rank = int(rank)
+        self.world_size = int(world_size)
         self.seed = int(seed)
         self.epoch = 0
+        self.local_batch_size = math.ceil(self.global_batch_size / self.world_size)
         self.num_batches = math.ceil(self.size / self.global_batch_size)
 
     def set_epoch(self, epoch: int) -> None:
@@ -85,10 +89,17 @@ class ExactGlobalBatchSampler(Sampler[int]):
         indices = torch.randperm(self.size, generator=generator).tolist()
         for batch_index in range(self.num_batches):
             offset = batch_index * self.global_batch_size
-            if self.rank < self.global_batch_size and offset + self.rank < self.size:
-                yield indices[offset + self.rank]
-            else:
-                yield -1
+            local_indices = []
+            for item_index in range(self.local_batch_size):
+                global_index = offset + self.rank * self.local_batch_size + item_index
+                in_batch = global_index < offset + self.global_batch_size
+                if in_batch and global_index < self.size:
+                    local_indices.append(indices[global_index])
+                elif in_batch and self.local_batch_size > 1 and self.size:
+                    local_indices.append(indices[global_index % self.size])
+                else:
+                    local_indices.append(-1)
+            yield local_indices
 
 
 class DummyAwareVideoDataset(Dataset):
@@ -243,13 +254,14 @@ def main() -> None:
         ],
     )
     world_size = accelerator.num_processes
-    if world_size != 4:
-        raise RuntimeError(f"This run requires exactly 4 GPUs, found {world_size}")
+    if world_size < 1:
+        raise RuntimeError(f"Expected at least one distributed process, found {world_size}")
     micro_global_batch_size = args.global_batch_size // args.gradient_accumulation_steps
-    if micro_global_batch_size > world_size:
+    local_batch_size = math.ceil(micro_global_batch_size / world_size)
+    if local_batch_size > 1 and micro_global_batch_size % world_size:
         raise ValueError(
-            "global batch / gradient accumulation cannot exceed GPU count "
-            "with per-rank microbatch 1"
+            "When a rank handles multiple samples, global batch / accumulation "
+            "must be divisible by the process count"
         )
 
     set_seed(args.seed, device_specific=True)
@@ -260,13 +272,13 @@ def main() -> None:
     if len(raw_dataset) == 0:
         raise ValueError(f"No video clips listed in {args.csv}")
     sampler = ExactGlobalBatchSampler(
-        len(raw_dataset), micro_global_batch_size, accelerator.process_index, args.seed
+        len(raw_dataset), micro_global_batch_size, accelerator.process_index,
+        world_size, args.seed
     )
     dataset = DummyAwareVideoDataset(raw_dataset)
     dataloader = DataLoader(
         dataset,
-        batch_size=1,
-        sampler=sampler,
+        batch_sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
@@ -354,16 +366,22 @@ def main() -> None:
         sampler.set_epoch(epoch)
         for batch_index, (video, valid) in enumerate(dataloader):
             accumulation_start = (batch_index // args.gradient_accumulation_steps) * args.gradient_accumulation_steps
-            accumulation_valid_count = min(
-                args.global_batch_size,
-                len(raw_dataset) - accumulation_start * micro_global_batch_size,
-            )
+            if local_batch_size > 1:
+                accumulation_valid_count = micro_global_batch_size * min(
+                    args.gradient_accumulation_steps,
+                    batches_per_epoch - accumulation_start,
+                )
+            else:
+                accumulation_valid_count = min(
+                    args.global_batch_size,
+                    len(raw_dataset) - accumulation_start * micro_global_batch_size,
+                )
             sync_now = (
                 (batch_index + 1) % args.gradient_accumulation_steps == 0
                 or batch_index + 1 == batches_per_epoch
             )
             sync_context = nullcontext() if sync_now else accelerator.no_sync(model)
-            valid_sample = bool(valid.item())
+            valid_sample_count = int(valid.sum().item())
             with sync_context:
                 with accelerator.autocast():
                     raw_loss = model(
@@ -372,15 +390,17 @@ def main() -> None:
                             accelerator.device, non_blocking=True
                         ),
                     )
-                    if valid_sample:
-                        scaled_loss = raw_loss * (world_size / accumulation_valid_count)
+                    if valid_sample_count:
+                        scaled_loss = raw_loss * (
+                            world_size * valid_sample_count / accumulation_valid_count
+                        )
                     else:
                         scaled_loss = raw_loss * 0.0
                 accelerator.backward(scaled_loss)
 
             local_metrics = torch.stack([
-                raw_loss.detach().float() * float(valid_sample),
-                torch.tensor(float(valid_sample), device=accelerator.device),
+                raw_loss.detach().float() * float(valid_sample_count),
+                torch.tensor(float(valid_sample_count), device=accelerator.device),
             ]).unsqueeze(0)
             gathered = accelerator.gather(local_metrics)
             logged_loss = (gathered[:, 0].sum() / gathered[:, 1].sum().clamp_min(1)).item()

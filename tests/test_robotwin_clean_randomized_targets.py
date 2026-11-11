@@ -1,6 +1,7 @@
 from argparse import Namespace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -9,6 +10,7 @@ from scripts.physical_tokens.merge_robotwin_clean_randomized_dual_targets import
 )
 from scripts.physical_tokens import run_node002_robotwin_clean_randomized_parallel_20k as parallel
 from starVLA.dataloader.lerobot_datasets import _shared_discrete_token_cache
+from starVLA.dataloader.gr00t_lerobot import datasets as lerobot_datasets
 
 
 def test_discrete_cache_is_shared_across_task_wrappers(tmp_path: Path) -> None:
@@ -18,6 +20,48 @@ def test_discrete_cache_is_shared_across_task_wrappers(tmp_path: Path) -> None:
                         episode_ids=np.array([0]), base_indices=np.array([0]))
     resolved = str(path.resolve())
     assert _shared_discrete_token_cache(resolved) is _shared_discrete_token_cache(resolved)
+
+
+def test_rank_local_export_can_disable_dataset_metadata_collectives(monkeypatch, tmp_path: Path) -> None:
+    dataset = object.__new__(lerobot_datasets.LeRobotSingleDataset)
+    dataset.data_cfg = {"disable_distributed_metadata_sync": True}
+    monkeypatch.setattr(
+        lerobot_datasets,
+        "dist",
+        SimpleNamespace(
+            is_initialized=lambda: True,
+            get_rank=lambda: 0,
+            broadcast_object_list=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("rank-local dataset construction must not broadcast")
+            ),
+        ),
+    )
+    dataset._get_steps_config_key = lambda: "rank-local-test"
+    dataset._get_steps_cache_path = lambda: tmp_path / "steps.pkl"
+    dataset._load_cached_steps = lambda _path: None
+    dataset._get_all_steps_single_process = lambda: [(3, 7)]
+    dataset._count_filtered_trajectories = lambda _steps: 1
+    dataset._filter_steps_missing_videos = lambda steps: steps
+    dataset._last_step_filter_summary = {}
+    dataset._trajectory_ids = np.asarray([3])
+    dataset._trajectory_lengths = np.asarray([10])
+    dataset.delete_pause_frame = False
+
+    assert dataset._get_all_steps() == [(3, 7)]
+
+
+def test_video_fps_falls_back_to_dataset_info_rate() -> None:
+    dataset = object.__new__(lerobot_datasets.LeRobotSingleDataset)
+    dataset._lerobot_info_meta = {"fps": 15}
+
+    channels, fps = dataset._resolve_video_feature_channels_and_fps({
+        "dtype": "video",
+        "shape": [3, 480, 640],
+        "names": ["channels", "height", "width"],
+    })
+
+    assert channels == 3
+    assert fps == 15.0
 
 
 def test_incomplete_output_pair_is_recoverable(tmp_path: Path) -> None:
@@ -87,6 +131,15 @@ def test_episode_shards_balance_frames_and_cover_each_episode(tmp_path: Path, mo
         json.dumps({"episode_index": index, "length": 100 + index})
         for index in range(500)
     ))
+    (meta / "info.json").write_text(json.dumps({
+        "chunks_size": 1000,
+        "data_path": "data/episodes.parquet",
+        "video_path": "videos/{video_key}/episode.mp4",
+    }))
+    (meta / "modality.json").write_text(json.dumps({"video": {}}))
+    data = root / "test_task/data/episodes.parquet"
+    data.parent.mkdir(parents=True)
+    data.write_bytes(b"fixture")
     monkeypatch.setattr(parallel, "DATA_ROOT", tmp_path)
     shards = parallel.episode_shards("test_task", 4)
     ids = [episode for episodes, _ in shards for episode in episodes]

@@ -1013,6 +1013,17 @@ class LeRobotSingleDataset(Dataset):
         """The tasks for the dataset."""
         return self._tasks
 
+    def _distributed_metadata_sync_enabled(self) -> bool:
+        """Whether dataset metadata should be shared through the global process group.
+
+        Rank-local preprocessing jobs may construct different datasets on each rank.
+        Those callers must opt out of collectives here because their call order is
+        intentionally not synchronized across ranks.
+        """
+        if self.data_cfg and self.data_cfg.get("disable_distributed_metadata_sync", False):
+            return False
+        return dist.is_initialized()
+
     def _get_metadata(self, embodiment_tag: EmbodimentTag) -> DatasetMetadata:
         """Get the metadata for the dataset.
 
@@ -1074,8 +1085,10 @@ class LeRobotSingleDataset(Dataset):
 
 
         # 2. Dataset statistics
+        sync_distributed_metadata = self._distributed_metadata_sync_enabled()
+
         def is_main():
-            return (not dist.is_initialized()) or dist.get_rank() == 0
+            return (not sync_distributed_metadata) or dist.get_rank() == 0
         
         action_mode = _normalize_action_mode(self.data_cfg.get("action_mode", "abs") if self.data_cfg else "abs")
         le_statistics_by_mode = None
@@ -1316,7 +1329,7 @@ class LeRobotSingleDataset(Dataset):
                 _write_statistics_cache("after statistics computation")
 
         # ---------- sync statistics from rank0 ----------
-        if dist.is_initialized():
+        if sync_distributed_metadata:
             obj_list = [le_statistics_by_mode if is_main() else None]
             dist.broadcast_object_list(obj_list, src=0)
             le_statistics_by_mode = obj_list[0]
@@ -2240,22 +2253,24 @@ class LeRobotSingleDataset(Dataset):
         Returns:
             list[tuple[str, int]]: A list of (trajectory_id, base_index) tuples.
         """
+        sync_distributed_metadata = self._distributed_metadata_sync_enabled()
+
         def is_main():
-            return (not dist.is_initialized()) or dist.get_rank() == 0
+            return (not sync_distributed_metadata) or dist.get_rank() == 0
     
         config_key = self._get_steps_config_key()
         steps_path = self._get_steps_cache_path()
     
         # ---------- try to read from cache  ----------
         cached_steps = self._load_cached_steps(steps_path)
-        if cached_steps is not None and not dist.is_initialized():
+        if cached_steps is not None and not sync_distributed_metadata:
             if os.environ.get("STARVLA_RECHECK_VIDEOS", "0") == "1":
                 return self._filter_steps_missing_videos(cached_steps)
             return cached_steps
 
-        # In distributed runs every rank must execute the same collectives in
-        # the same order. Let rank0 be the source even when other ranks can
-        # read the cache, otherwise later broadcasts can receive this steps list.
+        # When distributed metadata sync is enabled, every rank must execute
+        # collectives in the same order. Let rank0 be the source even when other
+        # ranks can read the cache, so every broadcast receives the same steps.
         if is_main():
             if cached_steps is not None:
                 all_steps = cached_steps
@@ -2306,7 +2321,7 @@ class LeRobotSingleDataset(Dataset):
             all_steps = None
 
         # ---------- sync steps from rank0 ----------
-        if dist.is_initialized():
+        if sync_distributed_metadata:
             obj_list = [all_steps]
             dist.broadcast_object_list(obj_list, src=0)
             all_steps = obj_list[0]
@@ -3071,11 +3086,22 @@ class LeRobotSingleDataset(Dataset):
             fps = float(self.lerobot_info_meta.get("fps", 1))
             return channels, fps
 
-        # NOTE(FH): different lerobot dataset versions have different keys for fps metadata.
-        try:
-            fps = float(le_video_meta["video_info"]["video.fps"])
-        except KeyError:
-            fps = float(le_video_meta["info"]["video.fps"])
+        # Different LeRobot exports store the video FPS in different places.
+        # RoboTwin v2.1 metadata can omit both nested feature keys and keep FPS
+        # only at the top level of meta/info.json.
+        fps_value = None
+        for metadata_key in ("video_info", "info"):
+            feature_info = le_video_meta.get(metadata_key)
+            if isinstance(feature_info, dict) and feature_info.get("video.fps") is not None:
+                fps_value = feature_info["video.fps"]
+                break
+        if fps_value is None:
+            fps_value = self.lerobot_info_meta.get("fps")
+        if fps_value is None:
+            raise KeyError("Video feature metadata and dataset info do not specify video FPS")
+        fps = float(fps_value)
+        if fps <= 0:
+            raise ValueError(f"Video FPS must be positive, got {fps}")
 
         return channels, fps
 
